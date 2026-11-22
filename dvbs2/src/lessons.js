@@ -7,13 +7,13 @@ export function rampCaption(rx, authOn) {
   const onOverlay = rx.source === 'overlay';
   if (rx.state === 'locked' || rx.state === 'degraded') {
     if (onOverlay) return authOn ? 'The receiver locked to the stronger signal, but its content failed authentication, so nothing is displayed. Viewers are still off air.' : 'Captured. The IQ plot is sharp again, but around the other signal, and the injected picture is on screen.';
-    return rx.state === 'locked' ? 'The second signal is rising. The IQ dots spread, but FEC still corrects every error, so the picture stays clean.' : 'Under 1 dB of margin. The picture is still clean, but there is almost nothing left.';
+    return rx.state === 'locked' ? 'The receiver is following the carrier. Any second signal spreads the IQ dots, but FEC still corrects every error, so the picture stays clean.' : 'Under 1 dB of margin. The picture is still clean, but there is almost nothing left.';
   }
   return {
-    fecFail: 'The demodulator still tracks the carrier, but there are more errors than FEC can correct. The picture freezes and breaks up. This is the state technicians call “demod locked, FEC failing”.',
-    lost: 'Interference is now too strong for the demodulator to hold the carrier’s phase, so the constellation smears into rings.',
+    fecFail: 'The demodulator still tracks the signal, but there are more errors than FEC can correct. The picture freezes and breaks up. This is the state technicians call “demod locked, FEC failing”.',
+    lost: 'Interference is now too strong for the demodulator to hold the signal’s phase, so the constellation smears into rings.',
     searching: 'The receiver is searching for any signal it can lock. Neither one is decodable, so there is no picture.',
-    frameSync: 'The stronger signal is now clean enough that the receiver found its frame headers.',
+    frameSync: 'One signal is now clean enough that the receiver found its frame headers.',
     carrierLock: 'Carrier frequency and phase are recovered. The constellation snaps back into points.',
     fecLock: 'FEC is correcting the new stream, so its service information can finally be read.',
   }[rx.state];
@@ -30,6 +30,7 @@ export const LESSONS = [
   },
   {
     title: 'A second signal appears', set: { overlayOn: true, ratioDb: -15 },
+    see: { href: '/interference/?lesson=2', text: 'Review how interference adds to noise: Interference Lab' },
     text: ({ l }) => `A second uplink now shares the same frequency, 15 dB weaker than the carrier. To the receiver it is just added interference. Es/(N+I) falls to ${n(l.carrierEs)} dB and the dots grow fuzzier. FEC still corrects everything while the link stays above threshold, so the IQ plot warns you before the video does.`,
   },
   {
@@ -50,11 +51,12 @@ export const LESSONS = [
   },
   {
     title: 'Why it stays captured', set: { overlayOn: true, ratioDb: 7.5 }, peakDb: 12,
+    see: { href: '/interference/?lesson=6', text: 'Compare with swept interference: Interference Lab' },
     text: ({ l, rx }) => rx.source === 'overlay' ? `The overlay rose to +12 dB and has dropped back to +7.5 dB. The receiver is still following it, with Es/(N+I) at ${n(l.overlayEs)} dB. Holding a lock takes ${n(l.need)} dB, but acquiring one takes more (1.5 dB in this model), so a receiver arriving at this level could need a stronger signal to lock. This is hysteresis, and it means a link may not recover the moment conditions improve.` : `With this MODCOD and C/N the receiver did not stay on the overlay, so there is no hysteresis to see here. Try 8PSK 2/3 at 16 dB C/N. Holding a lock takes less signal than acquiring one, which means a link may not recover the moment conditions improve.`,
   },
   {
     title: 'What monitoring sees', set: { overlayOn: true, ratioDb: 10 },
-    text: ({ l, rx }) => `Monitoring has several signatures: total level rose ${n(l.totalDb)} dB, MER in the decoded panel changed sharply through the event, and ${rx.source === 'overlay' ? 'the decoded service identity no longer matches' : 'the service identity cannot be read'}. Level alone is not enough: earlier, service failed while total level had risen less than 1 dB. Operators alarm on lock and MER too, and a carrier ID (CID) helps identify who is transmitting.`,
+    text: ({ l, rx }) => `Monitoring has several signatures. Total transponder output rose only ${n(l.totalDb)} dB, because the TWTA compresses, while the real carrier fell ${n(-l.carrierDb)} dB. MER changed sharply through the event, and ${rx.source === 'overlay' ? 'the decoded service identity no longer matches' : 'the service identity cannot be read'}. Level alone is not enough: earlier, service failed while total level had risen less than 1 dB. Operators alarm on lock and MER too, and a carrier ID (CID) helps identify who is transmitting.`,
   },
   {
     title: 'Defense: authenticate content', set: { overlayOn: true, ratioDb: 10, authOn: true },

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { imageMHz, isInverted, loForProduct, noiseFloorDbm, runScene, SCENES, summarize, sweep, wantedMHz, filterEdges, filterLossAtDb, filterSettings } from '../src/model.js';
+import { imageMHz, isInverted, loForProduct, noiseFloorDbm, runScene, SCENES, summarize, sweep, wantedMHz, filterEdges, filterLossAtDb, filterSettings, amplifierBackoff, noiseShape } from '../src/model.js';
 
 const near = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, `${msg ?? ''} expected ${b} ± ${tol}, got ${a}`);
 const last = (r) => r.nodes.at(-1);
@@ -18,8 +18,8 @@ for (const id of Object.keys(SCENES)) {
 test('scene frequencies match real band plans', () => {
   assert.equal(wantedMHz(SCENES.groundUp, SCENES.groundUp.defaults), 14250);
   assert.equal(wantedMHz(SCENES.satRx, SCENES.satRx.defaults), 12500);
-  assert.equal(wantedMHz(SCENES.groundDown, SCENES.groundDown.defaults), 1250);
-  assert.equal(imageMHz(SCENES.groundDown.defaults), 9500);
+  assert.equal(wantedMHz(SCENES.groundDown, SCENES.groundDown.defaults), 1750);
+  assert.equal(imageMHz(SCENES.groundDown.defaults), 9000);
   assert.equal(imageMHz(SCENES.satRx.defaults), 10750);
 });
 
@@ -101,7 +101,7 @@ test('LNA gain sets the cascade noise figure in the LNB', () => {
 
 test('every wanted product can be selected in every mixing scene', () => {
   for (const [id, product, loMHz, out] of [
-    ['bench', 'sum', 1700, 3700], ['groundUp', 'loMinusRf', 15450, 14250], ['satRx', 'loMinusRf', 26750, 12500], ['groundDown', 'loMinusRf', 13250, 1250],
+    ['bench', 'sum', 1700, 3700], ['groundUp', 'loMinusRf', 15450, 14250], ['satRx', 'loMinusRf', 26750, 12500], ['groundDown', 'loMinusRf', 14250, 1750],
   ]) {
     const r = runScene(id, { product, loMHz, twoTone: false, imageOn: false });
     const s = summarize(last(r));
@@ -138,7 +138,7 @@ test('a user filter changes the response, gain and rejection', () => {
   const stage = SCENES.groundDown.stages.find((x) => x.id === 'imageFilter');
   const image = (filters) => summarize(last(runScene('groundDown', { filters }))).imageDbc;
   assert.ok(image({ imageFilter: { bwMHz: 8000 } }) > image({}) + 10, 'a wide filter passes the image');
-  assert.ok(image({ imageFilter: { poles: 9 } }) < image({}) - 10, 'more poles reject it harder');
+  assert.ok(image({ imageFilter: { poles: 2 } }) > image({}) + 10, 'fewer poles reject it less');
   assert.ok(image({ imageFilter: { on: false } }) > image({}) + 10, 'one filter can be bypassed');
   const f = filterSettings(stage, SCENES.groundDown, { ...SCENES.groundDown.defaults, filters: { imageFilter: { lossDb: 2 } } });
   assert.ok(Math.abs(filterLossAtDb(f, f.centerMHz) - 2) < 1e-9);
@@ -170,4 +170,50 @@ test('small-signal gain includes a detuned filter', () => {
   const n = last(r), c = summarize(n).carrier;
   assert.ok(n.gainDb < -40);
   assert.ok(Math.abs(c.dbm - r.params.rfDbm - n.gainDb) < 1.5);
+});
+
+test('filter rejection stops at a stopband limit', () => {
+  const stage = SCENES.groundDown.stages.find((x) => x.id === 'imageFilter');
+  const f = filterSettings(stage, SCENES.groundDown, { ...SCENES.groundDown.defaults, filters: { imageFilter: { poles: 9, bwMHz: 100 } } });
+  assert.ok(Math.abs(filterLossAtDb(f, 5000) - (f.lossDb + 80)) < 1e-9);
+});
+
+test('an image adds to the carrier in power', () => {
+  const r = runScene('bench', { imageOn: true, imageDbm: -10, rfDbm: -10, filtersOn: false });
+  const x = last(r).products.find((p) => Math.abs(p.hz / 1e6 - 300) < 0.01);
+  const sum = 10 * Math.log10(x.parts.reduce((a, q) => a + 10 ** (q.dbm / 10), 0));
+  assert.ok(x.parts.length >= 2);
+  near(x.dbm, sum, 1e-9, 'power sum');
+});
+
+test('a starved LO lowers the mixer intercept', () => {
+  const iip3 = (loDbm) => sweep('bench', { loDbm }, 1, 13).iip3;
+  assert.ok(iip3(-3) < iip3(7) - 7);
+  near(last(runScene('bench', { loDbm: -3 })).iip3Dbm, iip3(-3), 1.5, 'cascade agrees with the measurement');
+});
+
+test('two tones compress at a lower level per tone than one tone', () => {
+  const s = sweep('bench', {}, 1);
+  assert.ok(s.p1dBTwoTone.pin < s.p1dB.pin - 2);
+});
+
+test('TWTA backoff reaches zero near saturation and output backoff is smaller than input backoff', () => {
+  const b = (rfDbm) => amplifierBackoff(runScene('satTx', { rfDbm }), 'twta');
+  for (const rfDbm of [-62, -52, -45, -40]) assert.ok(b(rfDbm).oboDb < b(rfDbm).iboDb, `${rfDbm}: OBO ${b(rfDbm).oboDb}, IBO ${b(rfDbm).iboDb}`);
+  assert.ok(Math.abs(b(-35).iboDb) < 1, `IBO ${b(-35).iboDb}`);
+  assert.ok(b(-35).oboDb < 1.5, `OBO ${b(-35).oboDb}`);
+  assert.equal(amplifierBackoff(runScene('satTx', {}), 'omux'), null);
+});
+
+test('uneven tones make the inversion visible', () => {
+  const list = last(runScene('bench', { loMHz: 2300, twoTone: true, unevenTones: true })).products;
+  const f1 = list.find((x) => x.label === 'LO − F1'), f2 = list.find((x) => x.label === 'LO − F2');
+  assert.ok(f1.hz > f2.hz && f1.dbm > f2.dbm + 4);
+});
+
+test('filters shape the noise floor directly after them', () => {
+  const r = runScene('bench', { filtersOn: true }), shape = noiseShape(r, 2);
+  assert.ok(Math.abs(shape(300)) < 0.01);
+  assert.ok(shape(3700) < -40);
+  assert.equal(noiseShape(r, 1)(3700), 0);
 });

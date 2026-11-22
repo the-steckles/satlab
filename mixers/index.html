@@ -55,6 +55,7 @@
   #lessonText { margin:0 0 8px; font-size:13px; min-height:112px; }
   .lessonNav { display:flex; align-items:center; gap:6px; }
   .lessonNav button { width:auto; margin:0; }
+  #lessonRestore { width:auto; margin:4px 0 8px; }
   #lessonPos { flex:1; text-align:center; color:var(--muted); font-size:12px; }
   .note { font-size:12px; color:var(--muted); margin:6px 0 0; }
   .tableWrap { max-height:300px; overflow:auto; }
@@ -63,6 +64,7 @@
   td { text-align:right; padding:3px 6px; border-bottom:1px solid #1c2730; white-space:nowrap; font-variant-numeric:tabular-nums; }
   th:first-child, td:first-child { text-align:left; }
   td i { display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:5px; }
+  @media (max-width:720px) { nav { flex-wrap:wrap; overflow-x:visible; } }
   @media (max-width:1180px) {
     main { grid-template-columns:minmax(0,1fr); padding:10px 16px; }
     /* Keep the experiment, test points and spectrum together, ahead of the settings. */
@@ -81,12 +83,15 @@
 <nav id="scenes" aria-label="Scenes"></nav>
 <main>
   <div class="col">
-    <section>
+    <section id="signalBox">
       <h2>Signal</h2>
       <label><span id="rfName">RF</span> frequency (MHz)<input id="rfMHz" type="number" min="1" max="40000" step="1" /></label>
       <label>Level per tone <output id="rfDbmOut"></output><input id="rfDbm" type="range" min="-130" max="20" step="0.5" /></label>
       <label><input id="twoTone" type="checkbox" />Two tones</label>
-      <label id="spacingWrap">Tone spacing (MHz)<input id="spacingMHz" type="number" min="0.01" max="100" step="0.01" /></label>
+      <div id="spacingWrap">
+        <label>Tone spacing (MHz)<input id="spacingMHz" type="number" min="0.01" max="100" step="0.01" /></label>
+        <label><input id="unevenTones" type="checkbox" />Make F2 6 dB weaker, to see spectral inversion</label>
+      </div>
     </section>
     <section id="loSection">
       <h2>Mixer</h2>
@@ -156,6 +161,7 @@
       <h2 id="lessonHead">Guided experiment</h2>
       <h3 id="lessonTitle"></h3>
       <p id="lessonText" aria-live="polite"></p>
+      <p class="note" id="lessonChanged" hidden>You changed this setup, so the text may not match. <button id="lessonRestore">Restore lesson settings</button></p>
       <div class="lessonNav">
         <button id="lessonBack">Back</button>
         <span id="lessonPos"></span>
@@ -174,13 +180,16 @@
         <dt>Third-order IM</dt><dd id="mIm3">–</dd>
         <dt>Input IP3</dt><dd id="mIip3">–</dd>
         <dt>Output IP3</dt><dd id="mOip3">–</dd>
-        <dt>Input P1dB</dt><dd id="mP1">–</dd>
+        <dt>Input P1dB, one tone</dt><dd id="mP1">–</dd>
+        <dt>Input P1dB, two tones</dt><dd id="mP1Two">–</dd>
+        <dt>TWTA input backoff</dt><dd id="mIbo">–</dd>
+        <dt>TWTA output backoff</dt><dd id="mObo">–</dd>
       </dl>
     </section>
     <section>
       <h2>Output against input</h2>
       <canvas id="slope" role="img" aria-label="Output level of the carrier and third-order products against input level, with P1dB and IP3 marked"></canvas>
-      <div class="legend"><span><i style="background:#0f9c7e"></i>Carrier</span><span><i style="background:#5f7df0"></i>Third-order</span><span>Dashed: ideal slopes</span><span>White line: your level</span></div>
+      <div class="legend"><span><i style="background:#0f9c7e"></i>One tone</span><span><i style="background:#c9780f"></i>Each of two tones</span><span><i style="background:#5f7df0"></i>Third-order</span><span>Dashed: ideal slopes</span><span>White line: your level</span></div>
     </section>
   </div>
 </main>

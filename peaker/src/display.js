@@ -121,7 +121,7 @@ export function createWaterfall(canvas, bins, rows = 320) {
       octx.putImageData(line, 0, 0);
     },
     clear() { octx.fillStyle = `rgb(${LUT[0]})`; octx.fillRect(0, 0, bins, rows); },
-    draw(centerHz, spanHz) {
+    draw(centerHz, spanHz, { lowDbm, highDbm, rowS }) {
       const p = prepare(canvas);
       p.ctx.imageSmoothingEnabled = false;
       p.ctx.drawImage(off, M.l, M.t, p.pw, p.ph);
@@ -133,6 +133,27 @@ export function createWaterfall(canvas, bins, rows = 320) {
       p.ctx.fillStyle = C.axis;
       p.ctx.fillText('Time (newest at top)', 0, 0);
       p.ctx.restore();
+      // Time ticks down the left edge.
+      p.ctx.fillStyle = C.axis;
+      p.ctx.textAlign = 'right';
+      const full = rows * rowS;
+      for (const f of [0, 0.5, 1]) {
+        const secs = full * f, label = secs >= 120 ? `${(secs / 60).toFixed(0)} min` : `${secs.toFixed(0)} s`;
+        p.ctx.fillText(f ? `−${label}` : 'now', M.l - 5, M.t + f * (p.ph - 9) + 9);
+      }
+      // Color scale, so a shade can be read as a level.
+      const barW = Math.min(130, p.pw / 3), barX = M.l + p.pw - barW - 6, barY = M.t + 5;
+      p.ctx.fillStyle = 'rgba(10,15,20,.85)';
+      p.ctx.fillRect(barX - 44, barY - 3, barW + 92, 15);
+      for (let x = 0; x < barW; x++) {
+        p.ctx.fillStyle = `rgb(${LUT[Math.round((x / (barW - 1)) * 255)]})`;
+        p.ctx.fillRect(barX + x, barY, 1.5, 9);
+      }
+      p.ctx.fillStyle = C.axis;
+      p.ctx.textAlign = 'right';
+      p.ctx.fillText(`${lowDbm}`, barX - 4, barY + 8);
+      p.ctx.textAlign = 'left';
+      p.ctx.fillText(`${highDbm} dBm`, barX + barW + 4, barY + 8);
     },
   };
 }
@@ -164,11 +185,11 @@ export function drawHistory(canvas, { samples, windowS, nowMs, showSat, hoverX, 
   const lanes = [
     { name: 'Azimuth (°)', value: (s) => az(s.az), sat: (s) => az(s.satAz), minSpan: 0.1, label: (v) => ((v % 360) + 360) % 360 },
     { name: 'Elevation (°)', value: (s) => s.el, sat: (s) => s.satEl, minSpan: 0.1, label: (v) => v },
-    { name: 'Beacon (dBm)', value: (s) => s.db, sat: null, minSpan: 10, label: (v) => v },
+    { name: 'Beacon (dBm)', value: (s) => s.db, sat: null, alt: (s) => s.fixedDb, minSpan: 10, label: (v) => v },
   ];
   lanes.forEach((lane, n) => {
     const y0 = top + n * (laneH + gap);
-    const values = visible.flatMap((s) => (showSat && lane.sat ? [lane.value(s), lane.sat(s)] : [lane.value(s)])).filter(Number.isFinite);
+    const values = visible.flatMap((s) => [lane.value(s), ...(showSat && lane.sat ? [lane.sat(s)] : []), ...(lane.alt ? [lane.alt(s)] : [])]).filter(Number.isFinite);
     let lo = values.length ? Math.min(...values) : 0, hi = values.length ? Math.max(...values) : 1;
     const pad = Math.max((lane.minSpan - (hi - lo)) / 2, (hi - lo) * 0.08);
     lo -= pad; hi += pad;
@@ -206,6 +227,7 @@ export function drawHistory(canvas, { samples, windowS, nowMs, showSat, hoverX, 
       ctx.setLineDash([]);
     };
     if (showSat && lane.sat) line(lane.sat, C.hold, [5, 4]);
+    if (lane.alt) line(lane.alt, C.hold, [5, 4]);
     line(lane.value, C.trace, []);
     ctx.restore();
   });
@@ -233,6 +255,7 @@ export function drawHistory(canvas, { samples, windowS, nowMs, showSat, hoverX, 
   lanes.forEach((lane) => { ctx.beginPath(); ctx.arc(hx, lane.y(lane.value(s)), 4, 0, 2 * Math.PI); ctx.fill(); });
   const rows = [`${((nowMs - s.t) / 1000).toFixed(1)} s ago · ${PHASE_NAMES[s.phase] ?? 'Manual'}`, `Az ${s.az.toFixed(3)}°`, `El ${s.el.toFixed(3)}°`, `Beacon ${s.db.toFixed(1)} dBm`];
   if (showSat) rows.push(`Sat ${s.satAz.toFixed(3)}°, ${s.satEl.toFixed(3)}°`);
+  if (Number.isFinite(s.fixedDb)) rows.push(`Fixed dish ${s.fixedDb.toFixed(1)} dBm`);
   const boxW = Math.max(...rows.map((r) => ctx.measureText(r).width)) + 14, boxH = rows.length * 15 + 8;
   const bx = hx + boxW + 12 > right ? hx - boxW - 8 : hx + 8;
   ctx.fillStyle = '#1b2732';

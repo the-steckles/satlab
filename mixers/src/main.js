@@ -1,17 +1,19 @@
 import { LESSONS } from './lessons.js';
-import { filterEdges, filterLossAtDb, filterSettings, loForProduct, noiseFloorDbm, PRODUCTS, runScene, SCENES, summarize, sweep, wantedMHz } from './model.js';
+import { amplifierBackoff, filterEdges, filterLossAtDb, filterSettings, loForProduct, noiseFloorDbm, noiseShape, PRODUCTS, runScene, SCENES, summarize, sweep, wantedMHz } from './model.js';
 import { drawFilter, drawPlan, drawSlope, drawSpectrum, KINDS } from './plots.js';
+import { mountSuite, parseLesson, writeLesson } from '../../lib/suite.js';
 
 const $ = (id) => document.getElementById(id);
-const S = { sceneId: 'bench', params: {}, filterId: null, nodeIndex: 1, span: 'all', rbw: 100000, lesson: 0, result: null, hoverX: null, slope: null, slopeKey: '', slopeTimer: 0 };
-const NUMBERS = ['rfMHz', 'loMHz', 'spacingMHz'], RANGES = ['rfDbm', 'loDbm', 'imageDbm'], CHECKS = ['twoTone', 'imageOn', 'filtersOn', 'holdOutput'];
+const suite = mountSuite('mixers', { jumps: [['lessonBox', 'Lesson'], ['chainBox', 'Chain'], ['specBox', 'Spectrum'], ['signalBox', 'Controls']] });
+const S = { sceneId: 'bench', params: {}, saved: {}, filterId: null, nodeIndex: 1, span: 'all', rbw: 100000, lesson: 0, result: null, hoverX: null, slope: null, slopeKey: '', slopeTimer: 0 };
+const NUMBERS = ['rfMHz', 'loMHz', 'spacingMHz'], RANGES = ['rfDbm', 'loDbm', 'imageDbm'], CHECKS = ['twoTone', 'unevenTones', 'imageOn', 'filtersOn', 'holdOutput'];
 const dbText = (v, unit = 'dB') => (v === null || v === undefined || !Number.isFinite(v) ? '–' : `${v.toFixed(1).replace('-', '−')} ${unit}`);
 
 function syncControls() {
   const scene = SCENES[S.sceneId], p = S.params;
   for (const id of NUMBERS) if (document.activeElement !== $(id)) $(id).value = p[id];
   for (const id of RANGES) { $(id).value = p[id]; $(`${id}Out`).textContent = dbText(p[id], 'dBm'); }
-  for (const id of CHECKS) $(id).checked = p[id];
+  for (const id of CHECKS) $(id).checked = !!p[id];
   $('mixerType').value = p.mixerType;
   syncProducts(scene, p);
   $('rfName').textContent = scene.inputName;
@@ -139,13 +141,17 @@ function renderSpectrum() {
   const topDbm = Math.ceil((strongest + 8) / 10) * 10;
   const bottomDbm = Math.min(topDbm - 80, Math.floor((floorDbm - 12) / 10) * 10);
   const [loHz, hiHz] = plotRange(node, floorDbm);
-  drawSpectrum($('spectrum'), { list: node.products, loHz, hiHz, topDbm, bottomDbm, floorDbm, hoverX: S.hoverX });
+  const shape = noiseShape(S.result, S.nodeIndex), thermal = -174 + 10 * Math.log10(S.rbw);
+  const noiseAt = (hz) => Math.max(thermal, floorDbm + shape(Math.max(1e-3, hz / 1e6)));
+  drawSpectrum($('spectrum'), { list: node.products, loHz, hiHz, topDbm, bottomDbm, floorDbm, noiseAt, hoverX: S.hoverX });
   $('specTitle').textContent = `Spectrum at ${node.name}`;
 }
 
 function renderTable(node, s) {
   const ref = s.carrier?.dbm;
-  const rows = node.products.flatMap((x) => x.parts).sort((a, b) => b.dbm - a.dbm).slice(0, 24).map((x) => {
+  // Products far under the noise cannot be measured, so listing them would only suggest false precision.
+  const floor = noiseFloorDbm(node, S.rbw) - 20;
+  const rows = node.products.flatMap((x) => x.parts).filter((x) => x.dbm >= floor).sort((a, b) => b.dbm - a.dbm).slice(0, 24).map((x) => {
     const tr = document.createElement('tr');
     const name = document.createElement('td'), swatch = document.createElement('i');
     swatch.style.background = KINDS[x.kind].color;
@@ -173,16 +179,23 @@ function renderMeasures(node, s) {
   $('mIip3').textContent = dbText(S.slope?.iip3, 'dBm');
   $('mOip3').textContent = dbText(S.slope?.oip3, 'dBm');
   $('mP1').textContent = dbText(S.slope?.p1dB?.pin, 'dBm');
+  $('mP1Two').textContent = dbText(S.slope?.p1dBTwoTone?.pin, 'dBm');
+  const backoff = S.sceneId === 'satTx' ? amplifierBackoff(S.result, 'twta') : null;
+  $('mIbo').textContent = dbText(backoff?.iboDb);
+  $('mObo').textContent = dbText(backoff?.oboDb);
 }
 
 function renderLesson(node, s) {
   const list = LESSONS[S.sceneId], lesson = list[S.lesson];
   $('lessonHead').textContent = `Guided experiment: ${SCENES[S.sceneId].name}`;
   $('lessonTitle').textContent = lesson.title;
-  $('lessonText').textContent = lesson.text({ r: S.result, s, node });
+  suite.text($('lessonText'), lesson.text({ r: S.result, s, node }));
+  const expected = lessonParams(S.sceneId, S.lesson);
+  $('lessonChanged').hidden = Object.keys({ ...expected, ...S.params }).every((k) => k === 'filters' ? !Object.keys(S.params.filters).length : !!expected[k] === !!S.params[k] && (typeof expected[k] !== 'number' || expected[k] === S.params[k]) && (typeof expected[k] !== 'string' || expected[k] === S.params[k]));
   $('lessonPos').textContent = `${S.lesson + 1} of ${list.length}`;
   $('lessonBack').disabled = S.lesson === 0;
   $('lessonNext').disabled = S.lesson === list.length - 1;
+  suite.related(lesson.see, S.sceneId === 'groundDown' && S.lesson === list.length - 1);
 }
 
 // shortcut: the sweep runs on the main thread after input settles, move it to a Web Worker if it ever causes visible lag.
@@ -215,12 +228,19 @@ function render() {
   renderMeasures(node, s);
 }
 
+// Lessons build on one another, so a step's settings are the defaults plus every step up to it.
+function lessonParams(sceneId, index) {
+  const params = { ...SCENES[sceneId].defaults, filters: {} };
+  for (let i = 0; i <= index; i++) Object.assign(params, LESSONS[sceneId][i].set);
+  return params;
+}
+
 function applyLesson(index) {
   const scene = SCENES[S.sceneId], list = LESSONS[S.sceneId];
   S.lesson = index;
-  // Lessons build on one another, so replay from the scene defaults up to this step.
-  S.params = { ...scene.defaults, filters: {} };
-  for (let i = 0; i <= index; i++) Object.assign(S.params, list[i].set);
+  S.saved[S.sceneId] = index;
+  writeLesson(index, { scene: S.sceneId });
+  S.params = lessonParams(S.sceneId, index);
   const lesson = list[index];
   S.span = lesson.span;
   S.nodeIndex = scene.stages.length;
@@ -228,7 +248,7 @@ function applyLesson(index) {
   render();
 }
 
-function setScene(id) {
+function setScene(id, lesson = S.saved[id] ?? 0) {
   S.sceneId = id;
   const filters = SCENES[id].stages.filter((x) => x.type === 'filter');
   S.filterId = filters[0].id;
@@ -238,7 +258,7 @@ function setScene(id) {
     b.classList.toggle('active', on);
     b.setAttribute('aria-pressed', on);
   }
-  applyLesson(0);
+  applyLesson(lesson);
 }
 
 function wire() {
@@ -307,6 +327,7 @@ function wire() {
   $('span').addEventListener('change', (e) => { S.span = e.target.value; renderSpectrum(); });
   $('rbw').addEventListener('change', (e) => { S.rbw = +e.target.value; renderSpectrum(); });
   $('reset').addEventListener('click', () => applyLesson(0));
+  $('lessonRestore').addEventListener('click', () => applyLesson(S.lesson));
   $('lessonBack').addEventListener('click', () => applyLesson(S.lesson - 1));
   $('lessonNext').addEventListener('click', () => applyLesson(S.lesson + 1));
   const canvas = $('spectrum');
@@ -316,4 +337,6 @@ function wire() {
 }
 
 wire();
-setScene('bench');
+const query = new URLSearchParams(location.search).get('scene');
+const startScene = Object.hasOwn(SCENES, query ?? '') ? query : 'bench';
+setScene(startScene, parseLesson(location.search, LESSONS[startScene].length));

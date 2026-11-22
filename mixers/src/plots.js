@@ -12,12 +12,12 @@ const M = { l: 56, r: 12, t: 12, b: 40 };
 const mhzText = (hz, step) => (hz / 1e6).toFixed(step >= 1e6 ? 0 : step >= 1e5 ? 1 : 2);
 
 // Repeatable noise, so the trace does not shimmer when nothing has changed.
-const noiseAt = (i) => {
+const randomAt = (i) => {
   const x = Math.sin(i * 127.1 + 11.7) * 43758.5453;
   return x - Math.floor(x);
 };
 
-export function drawSpectrum(canvas, { list, loHz, hiHz, topDbm, bottomDbm, floorDbm, hoverX }) {
+export function drawSpectrum(canvas, { list, loHz, hiHz, topDbm, bottomDbm, floorDbm, noiseAt = () => floorDbm, hoverX }) {
   const { ctx, w, h } = prepare(canvas);
   const pw = w - M.l - M.r, ph = h - M.t - M.b;
   const X = (hz) => M.l + ((hz - loHz) / (hiHz - loHz)) * pw;
@@ -48,24 +48,34 @@ export function drawSpectrum(canvas, { list, loHz, hiHz, topDbm, bottomDbm, floo
   ctx.beginPath();
   ctx.rect(M.l, M.t, pw, ph);
   ctx.clip();
+  const noiseFloorAt = noiseAt, hzAt = (px) => loHz + (px / pw) * (hiHz - loHz);
   ctx.strokeStyle = '#4b5b67';
   ctx.beginPath();
   for (let px = 0; px <= pw; px += 2) {
     // Log-detected noise averages about 2.5 dB below its power level and has a long low tail.
-    const y = Y(floorDbm - 2.5 + 10 * Math.log10(-Math.log(Math.max(1e-3, noiseAt(px)))));
+    const y = Y(noiseFloorAt(hzAt(px)) - 2.5 + 10 * Math.log10(-Math.log(Math.max(1e-3, randomAt(px)))));
     if (px) ctx.lineTo(M.l + px, y); else ctx.moveTo(M.l + px, y);
   }
   ctx.stroke();
 
-  const visible = list.filter((p) => p.hz >= loHz && p.hz <= hiHz && p.dbm > floorDbm);
+  const visible = list.filter((p) => p.hz >= loHz && p.hz <= hiHz && p.dbm > noiseAt(p.hz));
   ctx.lineWidth = 2;
   for (const p of [...visible].reverse()) {
     const x = X(p.hz);
     ctx.strokeStyle = KINDS[p.kind].color;
     ctx.beginPath();
-    ctx.moveTo(x, Y(floorDbm));
+    ctx.moveTo(x, Y(noiseAt(p.hz)));
     ctx.lineTo(x, Y(p.dbm));
     ctx.stroke();
+    // Two signals on one frequency: draw the weaker one inside the stronger so neither is hidden.
+    const other = p.parts.filter((q) => q.kind !== p.kind && q.dbm > noiseAt(p.hz)).sort((a, b) => b.dbm - a.dbm)[0];
+    if (other) {
+      ctx.strokeStyle = KINDS[other.kind].color;
+      ctx.beginPath();
+      ctx.moveTo(x, Y(noiseAt(p.hz)));
+      ctx.lineTo(x, Y(other.dbm));
+      ctx.stroke();
+    }
   }
   ctx.lineWidth = 1;
 
@@ -179,6 +189,7 @@ export function drawSlope(canvas, data, operatingPin) {
     ctx.setLineDash([]);
   }
   line('im3', '#5f7df0');
+  line('tone', '#c9780f');
   line('single', '#0f9c7e');
   if (Number.isFinite(operatingPin) && operatingPin >= loX && operatingPin <= hiX) {
     ctx.strokeStyle = C.marker;
@@ -213,14 +224,14 @@ export function drawSlope(canvas, data, operatingPin) {
 // Filter loss against frequency, with each product arriving at the filter placed on the curve.
 export function drawFilter(canvas, { settings, lossAt, list }) {
   const { ctx, w, h } = prepare(canvas);
-  const m = { l: 48, r: 12, t: 10, b: 38 }, pw = w - m.l - m.r, ph = h - m.t - m.b, maxLoss = 80;
+  const m = { l: 48, r: 12, t: 10, b: 38 }, pw = w - m.l - m.r, ph = h - m.t - m.b, maxLoss = 100;
   const half = settings.bwMHz * 2.5, lo = Math.max(0.001, settings.centerMHz - half), hi = settings.centerMHz + half;
   const X = (mhz) => m.l + ((mhz - lo) / (hi - lo)) * pw, Y = (db) => m.t + (Math.min(maxLoss, db) / maxLoss) * ph;
   ctx.strokeStyle = C.grid;
   ctx.fillStyle = C.axis;
   ctx.textAlign = 'right';
   ctx.beginPath();
-  for (const db of [0, 20, 40, 60, 80]) {
+  for (const db of [0, 20, 40, 60, 80, 100]) {
     const y = Math.round(Y(db)) + 0.5;
     ctx.moveTo(m.l, y); ctx.lineTo(m.l + pw, y);
     ctx.fillText(db ? `−${db}` : '0', m.l - 5, y + 4);

@@ -101,3 +101,19 @@ test('identity and signature are unknown until FEC locks', () => {
   assert.equal(m.idAlarm, false);
   assert.equal(m.authResult, 'waiting');
 });
+
+test('a strong overlay compresses the transponder and pushes the real carrier down', () => {
+  const l = levels(at(10));
+  assert.ok(l.totalDb > 0 && l.totalDb < 3, `total ${l.totalDb}`);
+  assert.ok(l.carrierDb < -5, `carrier ${l.carrierDb}`);
+  assert.ok(Math.abs(levels(at(-30)).carrierDb) < 0.05);
+});
+
+test('after the overlay falls away the receiver returns to the carrier', () => {
+  let rx = settle(at(12));
+  assert.equal(rx.source, 'overlay');
+  for (let ratioDb = 12; ratioDb >= -25; ratioDb -= 0.15) rx = stepReceiver(rx, at(ratioDb), 0.1);
+  rx = run(rx, at(-25), 4);
+  assert.equal(rx.source, 'carrier');
+  assert.equal(rx.state, 'locked');
+});

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { beamwidthDeg, gainDbi, offAxisDeg } from '../src/antenna.js';
 import { createAutoPeak, createStepTrack, parabolicOffset, rasterPoints, spiralPoints } from '../src/track.js';
+import { guideProgress } from '../src/guide.js';
 import { describeController } from '../src/explain.js';
 
 const D = 2.4, F = 11.7e9, HP = beamwidthDeg(D, F);
@@ -185,4 +186,27 @@ test('auto-peak rejects noise across many runs', () => {
     if (c.phase === 'done') found++;
   }
   assert.ok(found <= 3, `${found} of 300 noise-only runs reported a peak`);
+});
+
+test('step-track holds still on noise and resumes when the signal returns', () => {
+  const rng = seeded(21);
+  const t = createStepTrack({ az: 100, el: 30, beamwidthDeg: HP, noiseDbm: NOISE, dwell: 2 });
+  const noise = () => NOISE + 10 * Math.log10(0.75 + 0.25 * -Math.log(1 - rng()));
+  for (let i = 0; i < 40; i++) t.update(noise());
+  assert.equal(t.phase, 'lost');
+  const held = t.target();
+  for (let i = 0; i < 200; i++) t.update(noise());
+  assert.deepEqual(t.target(), held);
+  for (let i = 0; i < 8; i++) t.update(NOISE + 25);
+  assert.equal(t.phase, 'tracking');
+});
+
+test('the first-task guide advances in order and never moves back', () => {
+  const r = { cnDb: -5, levelDbm: -140, expectedDbm: -114, tracking: true };
+  assert.equal(guideProgress(0, r), 0);
+  assert.equal(guideProgress(0, { ...r, cnDb: 7, levelDbm: -125 }), 1);
+  assert.equal(guideProgress(1, { ...r, cnDb: 20, levelDbm: -119 }), 2);
+  assert.equal(guideProgress(0, { ...r, cnDb: 30, levelDbm: -114 }), 4);
+  assert.equal(guideProgress(3, r), 4);
+  assert.equal(guideProgress(2, { ...r, tracking: false }), 2);
 });

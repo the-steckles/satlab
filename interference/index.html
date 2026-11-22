@@ -65,6 +65,7 @@
   #answers button.wrong { background:#3a1f1d; border-color:var(--bad); opacity:1; }
   #answers button.wrong::after { content:" ✕ your answer"; color:var(--bad); }
   .note { font-size:12px; color:var(--muted); margin:6px 0 0; }
+  @media (max-width:720px) { nav { flex-wrap:wrap; overflow-x:visible; } }
   @media (max-width:1180px) {
     main { grid-template-columns:minmax(0,1fr); padding:10px 16px; }
     .col { display:contents; }
@@ -86,10 +87,11 @@
 </nav>
 <main>
   <div class="col">
-    <section>
+    <section id="carrierBox">
       <h2>Your carrier</h2>
       <label>Position in transponder <output id="carrierMHzOut"></output><input id="carrierMHz" type="range" min="-15" max="15" step="0.5" /></label>
       <label>MODCOD<select id="modcod"></select></label>
+      <p class="note" id="rateNote" style="margin:-3px 0 7px"></p>
       <label>Transponder input backoff <output id="iboDbOut"></output><input id="iboDb" type="range" min="-12" max="15" step="0.5" /></label>
     </section>
     <section id="txBox">
@@ -101,6 +103,7 @@
         <label>Position <output id="neighborMHzOut"></output><input id="neighborMHz" type="range" min="-15" max="15" step="0.5" /></label>
         <label>Symbol rate <output id="neighborRsMHzOut"></output><input id="neighborRsMHz" type="range" min="1" max="30" step="0.5" /></label>
         <label>Power <output id="neighborTrimDbOut"></output><input id="neighborTrimDb" type="range" min="-10" max="10" step="0.5" /></label>
+        <label>MODCOD<select id="neighborModcod"></select></label>
       </div>
       <label><input id="alc" type="checkbox" />Transponder ALC</label>
       <button id="sandboxReset">Reset sandbox</button>
@@ -110,7 +113,7 @@
       <label><input id="iOn" type="checkbox" />Enabled</label>
       <label>Type<select id="iKind"><option value="cw">CW (single tone)</option><option value="narrow">Narrowband (modulated)</option><option value="swept">Swept</option><option value="partial">Partial-band</option><option value="barrage">Wideband</option></select></label>
       <label>Enters on<select id="iPath"><option value="uplink">Uplink (all sites)</option><option value="downlink">Downlink (Site A only)</option></select></label>
-      <label>Level relative to carrier <output id="icDbOut"></output><input id="icDb" type="range" min="-30" max="20" step="0.5" /></label>
+      <label>Level relative to nominal carrier <output id="icDbOut"></output><input id="icDb" type="range" min="-30" max="20" step="0.5" /></label>
       <label id="offsetWrap"><span id="offsetName">Position</span> <output id="offsetMHzOut"></output><input id="offsetMHz" type="range" min="-18" max="18" step="0.5" /></label>
       <p class="note" id="cwNote">An unmodulated tone has no bandwidth. The analyzer draws it as a line one resolution bin wide.</p>
       <label id="narrowWrap">Occupied width <output id="narrowMHzOut"></output><input id="narrowMHz" type="range" min="0.1" max="3" step="0.1" /></label>

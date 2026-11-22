@@ -19,28 +19,33 @@
   .tool h3 { margin:0 0 4px; font-size:19px; }
   a.tool h3 { color:var(--accent); }
   .tool p { margin:0; color:var(--muted); font-size:14px; }
+  .tool p.builds { margin-top:6px; font-size:12px; }
 </style>
 </head>
 <body>
 <main>
   <h1>SatLab</h1>
-  <p class="lead">Interactive simulators for learning how satellite communications work.</p>
-  <h2>Simulators</h2>
+  <p class="lead">Interactive simulators for learning how satellite communications work. Work through them in order, because each lab builds on the one before.</p>
+  <h2>Learning path</h2>
   <a class="tool" href="/peaker/">
-    <h3>Peaker</h3>
+    <h3>1. Peaker</h3>
     <p>Point a ground antenna at a real satellite, find its beacon on a spectrum analyzer, and step through how auto-peak and step-track work.</p>
+    <p class="builds">Start here.</p>
   </a>
   <a class="tool" href="/mixers/" style="margin-top:10px">
-    <h3>Mixer Lab</h3>
+    <h3>2. Mixer Lab</h3>
     <p>Follow signals through a bench mixer and a full satellite link. See images, spurs, compression and third-order products.</p>
+    <p class="builds">Builds on: reading a spectrum analyzer.</p>
   </a>
   <a class="tool" href="/interference/" style="margin-top:10px">
-    <h3>Interference Lab</h3>
+    <h3>3. Interference Lab</h3>
     <p>See how interference affects a satellite link, then diagnose trouble tickets the way an operator would.</p>
+    <p class="builds">Builds on: beacons from Peaker, compression and the TWTA from Mixer Lab.</p>
   </a>
   <a class="tool" href="/dvbs2/" style="margin-top:10px">
-    <h3>DVB-S2 Overlay Lab</h3>
+    <h3>4. DVB-S2 Overlay Lab</h3>
     <p>Follow video through a full broadcast chain, then watch a stronger signal break and capture the receiver, and how operators detect it.</p>
+    <p class="builds">Builds on: C/(N+I), margin and IQ plots from Interference Lab.</p>
   </a>
 </main>
 </body>

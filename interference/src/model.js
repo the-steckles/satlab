@@ -1,18 +1,17 @@
 // Link model for a fictional bent-pipe satellite. Interference is set relative to the carrier,
 // so this teaches effects and diagnosis without any transmit-power or targeting inputs.
 import { constellation, gaussian, merDb } from '../../lib/constellation.js';
+import { MODCODS, RELOCK_S } from '../../lib/modcods.js';
+import { twtaOutput } from '../../lib/twta.js';
 
 export const RS_MHZ = 5, TP_HALF_MHZ = 18;
 export const UP_CENTER_MHZ = 14250, DOWN_CENTER_MHZ = 12500;
-const UPLINK_CN_DB = 22, DOWNLINK_CN_AT_SAT_DB = 25, SYSTEM_TEMP_K = 150, RAIN_TEMP_K = 275;
+const ALC_RANGE_DB = 15, UPLINK_CN_DB = 22, DOWNLINK_CN_AT_SAT_DB = 25, SYSTEM_TEMP_K = 150, RAIN_TEMP_K = 275;
 
-// DVB-S2 quasi-error-free Es/N0 thresholds, ETSI EN 302 307-1.
-export const MODCODS = {
-  'QPSK 1/2': 1.0, 'QPSK 3/4': 4.03, '8PSK 2/3': 6.62, '8PSK 3/4': 7.91, '16APSK 3/4': 10.21, '32APSK 3/4': 12.73,
-};
+export { MODCODS, twtaOutput };
 
 export const DEFAULTS = {
-  carrierMHz: -8, rsMHz: RS_MHZ, neighborOn: true, neighborMHz: 8, neighborRsMHz: RS_MHZ, neighborTrimDb: 0,
+  carrierMHz: -8, rsMHz: RS_MHZ, neighborOn: true, neighborMHz: 8, neighborRsMHz: RS_MHZ, neighborTrimDb: 0, neighborModcod: '16APSK 3/4',
   modcod: '16APSK 3/4', iboDb: 6, trimDb: 0, alc: false, rainDb: 0, mispointDb: 0,
   interferer: { on: false, kind: 'cw', path: 'uplink', icDb: -10, offsetMHz: -8, narrowMHz: 0.5, bwMHz: 12, wideMHz: 36, spanMHz: 30, sweepWidthMHz: 0, sweepS: 8, sweepShape: 'triangle' },
 };
@@ -20,8 +19,6 @@ export const DEFAULTS = {
 const lin = (db) => 10 ** (db / 10);
 const dB = (x) => 10 * Math.log10(x);
 
-// Saleh TWTA curve in power, normalized so 0 dB input backoff is exactly saturation. Held flat past it.
-export const twtaOutput = (drive) => (drive >= 1 ? 1 : (4 * drive) / (1 + drive) ** 2);
 // shortcut: typical two-carrier C/IM, 11 dB at saturation and improving 2 dB per dB of backoff. Replace with a measured tube curve if one is ever available.
 export const carrierToImDb = (drive) => Math.max(9, 11 - 2 * dB(drive));
 const constantEnvelope = (i) => i.on && (i.kind === 'cw' || i.kind === 'swept');
@@ -73,14 +70,16 @@ function transponder(p, tS) {
   const noise = noisePerMHz * 2 * TP_HALF_MHZ;
   const pin = carrier + neighbor + noise + upI;
   // ALC holds the tube's total drive constant, so a stronger input lowers the gain ahead of the tube.
-  const drive = p.alc ? lin(-p.iboDb) : pin;
+  // Its attenuator has a finite range, so a large enough input change gets through.
+  const alcDb = p.alc ? Math.max(-ALC_RANGE_DB, Math.min(ALC_RANGE_DB, -p.iboDb - dB(pin))) : 0;
+  const drive = pin * lin(alcDb);
   const pout = twtaOutput(drive);
   const ratio = pout / pin;
   const cimDb = carrierToImDb(drive);
   // Limiter suppression: near saturation a dominant tone pushes weak signals down up to 6 dB, a noise-like signal about 1 dB.
   const suppressDb = (constantEnvelope(p.interferer) ? 6 : 1) * (upI / pin) * Math.min(1, drive);
   const weak = lin(-suppressDb);
-  return { nominal, carrier, neighbor, noise, noisePerMHz, band, iPower, upI, pin, drive, pout, ratio, weak, cimDb };
+  return { nominal, carrier, neighbor, noise, noisePerMHz, band, iPower, upI, pin, alcDb, drive, pout, ratio, weak, cimDb };
 }
 
 function carrierAt(tp, p, centerMHz, rs, inputPower, site, clearOut, tS, otherMHz = 0, otherRs = RS_MHZ, otherPower = 0) {
@@ -123,11 +122,12 @@ export function evaluate(params, tS = 0) {
   for (const site of ['A', 'B']) {
     const own = carrierAt(tp, p, p.carrierMHz, p.rsMHz, tp.carrier, site, clearOut, tS, p.neighborMHz, p.neighborRsMHz, tp.neighbor);
     const other = p.neighborOn ? carrierAt(tp, p, p.neighborMHz, p.neighborRsMHz, tp.neighbor, site, clearOut, tS, p.carrierMHz, p.rsMHz, tp.carrier) : null;
-    const margin = own.esn0 - need;
+    const margin = own.esn0 - need, neighborNeed = MODCODS[p.neighborModcod];
     sites[site] = {
       ...own, margin, state: stateOf(margin),
+      beaconDeltaDb: site === 'A' ? 0 - p.rainDb - p.mispointDb : 0, // The beacon has its own path, so only propagation and pointing move it.
       carrierDeltaDb: dB(own.c / reference.c), floorDeltaDb: dB(own.floor / reference.floor),
-      neighborEsn0: other?.esn0 ?? null, neighborMargin: other ? other.esn0 - need : null, neighborState: other ? stateOf(other.esn0 - need) : 'Off',
+      neighborEsn0: other?.esn0 ?? null, neighborMargin: other ? other.esn0 - neighborNeed : null, neighborState: other ? stateOf(other.esn0 - neighborNeed) : 'Off',
     };
   }
   return {
@@ -161,14 +161,20 @@ export const VIEWS = {
 };
 
 // Power spectral density in dB, with 0 dB at the clear-sky carrier for that test point.
-export function spectrum(params, view, tS, bins = 512, spanHalf = 26) {
+// dwellS is the analyzer's time per trace, so a fast sweep paints a continuous track instead of dots.
+export function spectrum(params, view, tS, bins = 512, spanHalf = 26, dwellS = 0) {
   const r = evaluate(params, tS), p = r.params, tp = r.tp;
   const clear = evaluate({ ...p, iboDb: DEFAULTS.iboDb, alc: false, rainDb: 0, mispointDb: 0, trimDb: 0, neighborTrimDb: 0, interferer: { ...p.interferer, on: false } });
   const isInput = view === 'input', isSite = view === 'A' || view === 'B';
   const loss = view === 'A' ? lin(-(p.rainDb + p.mispointDb)) : 1;
   const gain = isInput ? 1 : tp.ratio * tp.weak * loss;
   const ref = (isInput ? clear.tp.carrier : clear.tp.carrier * clear.tp.ratio) / RS_MHZ;
-  const band = interfererBand(p.interferer, tS);
+  let band = interfererBand(p.interferer, tS);
+  if (band && p.interferer.kind === 'swept' && dwellS > 0) {
+    const before = interfererBand(p.interferer, Math.max(0, tS - dwellS));
+    // A sawtooth reset jumps across the band, and that jump is not swept energy.
+    if (Math.abs(before[0] - band[0]) < p.interferer.spanMHz / 2) band = [Math.min(before[0], band[0]), Math.max(before[1], band[1])];
+  }
   const rainNoise = view === 'A' ? 1 + (RAIN_TEMP_K * (1 - lin(-p.rainDb))) / SYSTEM_TEMP_K : 1;
   const downNoise = isSite ? (lin(-DOWNLINK_CN_AT_SAT_DB) * rainNoise) / RS_MHZ : 0;
   // The analyzer resolves one bin, so a tone puts all its power there and reads as a line.
@@ -189,6 +195,21 @@ export function spectrum(params, view, tS, bins = 512, spanHalf = 26) {
     out[n] = dB(level / ref);
   }
   return { db: out, lowMHz: -spanHalf, highMHz: spanHalf, centerMHz: VIEWS[view].centerMHz, band };
+}
+
+// Time a modem can actually use, because each loss of lock costs a reacquisition afterward.
+export function usableShare(params, site = 'A', samples = 192) {
+  const sweepS = params.interferer?.sweepS ?? DEFAULTS.interferer.sweepS, dt = sweepS / samples;
+  let wait = 0, usable = 0;
+  // The first pass only settles the relock timer, because the pattern repeats.
+  for (let pass = 0; pass < 2; pass++) {
+    for (let i = 0; i < samples; i++) {
+      if (evaluate(params, (i / samples) * sweepS).sites[site].margin < 0) wait = RELOCK_S;
+      else if (wait > 0) wait -= dt;
+      else if (pass === 1) usable++;
+    }
+  }
+  return usable / samples;
 }
 
 const shoulder = (f, center, rs) => {

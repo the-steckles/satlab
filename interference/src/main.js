@@ -1,8 +1,11 @@
 import { drawConstellation } from '../../lib/constellation.js';
 import { LESSONS } from './lessons.js';
-import { ANSWERS, CASES, DEFAULTS, evaluate, iqSamples, lockShare, MODCODS, spectrum, VIEWS } from './model.js';
+import { ANSWERS, CASES, DEFAULTS, evaluate, iqSamples, lockShare, MODCODS, spectrum, usableShare, VIEWS } from './model.js';
+import { throughputMbps } from '../../lib/modcods.js';
 import { createWaterfall, drawTrace } from './plots.js';
+import { mountSuite, parseLesson, writeLesson } from '../../lib/suite.js';
 
+const suite = mountSuite('interference', { jumps: [['lessonBox', 'Lesson'], ['siteBox', 'Sites'], ['specBox', 'Spectrum'], ['iqBox', 'IQ'], ['carrierBox', 'Controls']] });
 const $ = (id) => document.getElementById(id);
 const BINS = 512, TOP_DB = 40, BOTTOM_DB = -40, FRAME_MS = 90;
 const fresh = () => ({ ...DEFAULTS, interferer: { ...DEFAULTS.interferer } });
@@ -15,8 +18,14 @@ const ROWS = [
   ['Receiver', (s) => s.state, (s) => s.state],
   ['Es/N0', (s) => num(s.esn0)],
   ['Margin', (s) => num(s.margin)],
-  ['Carrier change', (s) => sign(s.carrierDeltaDb, 'dB')],
-  ['Noise floor change', (s) => sign(s.floorDeltaDb, 'dB')],
+  ['Beacon level', (s) => sign(s.beaconDeltaDb, 'dB')],
+  // The fourth field marks rows that would give away a Diagnose ticket.
+  ['Carrier change', (s) => sign(s.carrierDeltaDb, 'dB'), null, true],
+  ['Noise floor change', (s) => sign(s.floorDeltaDb, 'dB'), null, true],
+  ['C/N uplink', (s) => num(s.cnUp), null, true],
+  ['C/N downlink', (s) => num(s.cnDown), null, true],
+  ['C/IM', (s) => num(s.cim), null, true],
+  ['C/I', (s) => num(s.iDb), null, true],
   ['Other carrier', (s) => s.neighborState, (s) => s.neighborState],
 ];
 
@@ -32,7 +41,7 @@ function buildSites() {
 function renderSites(r) {
   ROWS.forEach((row, i) => {
     const tr = $('sites').children[i];
-    tr.hidden = S.mode === 'diagnose' && row[0].endsWith('change'); // Tickets are read from the analyzer, not these rows.
+    tr.hidden = S.mode === 'diagnose' && !!row[3]; // Tickets are read from the analyzer, not these rows.
     ['A', 'B'].forEach((site, n) => {
       const td = tr.children[n + 1];
       td.textContent = row[1](r.sites[site]);
@@ -40,8 +49,8 @@ function renderSites(r) {
     });
   });
   const robbing = r.params.interferer.on && r.params.interferer.path === 'uplink' && r.robbedDb > 0.05 ? ` Interference is taking ${r.robbedDb.toFixed(1)} dB of output from each carrier.` : '';
-  const swept = r.params.interferer.on && r.params.interferer.kind === 'swept' ? ` Locked ${Math.round(lockShare(r.params) * 100)}% of each sweep.` : '';
-  $('tpNote').textContent = `Transponder output is ${num(-r.outputDb)} below saturation.${S.mode === 'learn' ? robbing + swept : ''}`;
+  const swept = r.params.interferer.on && r.params.interferer.kind === 'swept' ? ` Above threshold ${Math.round(lockShare(r.params) * 100)}% of each sweep, usable about ${Math.round(usableShare(r.params) * 100)}% after relock time.` : '';
+  $('tpNote').textContent = `Transponder output is ${num(-r.outputDb)} below saturation.${S.mode === 'diagnose' ? '' : robbing + swept}`;
 }
 
 function syncControls() {
@@ -54,6 +63,8 @@ function syncControls() {
   $('neighborWrap').hidden = !p.neighborOn;
   $('alc').checked = p.alc;
   $('modcod').value = p.modcod;
+  $('neighborModcod').value = p.neighborModcod;
+  $('rateNote').textContent = `About ${throughputMbps(p.modcod, p.rsMHz).toFixed(1)} Mbit/s at ${p.rsMHz.toFixed(1)} Msym/s, before framing overhead.`;
   $('iOn').checked = i.on;
   $('iKind').value = i.kind;
   $('iPath').value = i.path;
@@ -105,7 +116,7 @@ function renderPower(r) {
     return span;
   }));
   $('powerNote').textContent = r.params.alc
-    ? 'ALC is on: an attenuator holds the tube’s drive constant, so a stronger input turns every signal down together.'
+    ? `ALC is on and applying ${r.tp.alcDb > 0 ? '+' : ''}${r.tp.alcDb.toFixed(1)} dB (range ±15 dB). It holds the tube’s drive constant, so a stronger input turns every signal down together.`
     : 'Fixed gain: the tube has a physical output limit. As it nears that limit, a stronger signal leaves less output for the others.';
 }
 
@@ -122,11 +133,12 @@ function renderLesson(r) {
     const a = r.sites.A;
     $('lessonHead').textContent = 'Sandbox';
     $('lessonTitle').textContent = 'Build your own scenario';
-    $('lessonText').textContent = `Set up the transmit site, the second carrier and the interference, then watch the spectrum, IQ plot and site table respond. Your carrier needs ${num(r.need)} and has ${num(a.esn0)} at Site A, so its margin is ${num(a.margin)}.`;
+    suite.text($('lessonText'), `Set up the transmit site, the second carrier and the interference, then watch the spectrum, IQ plot and site table respond. Your carrier needs ${num(r.need)} and has ${num(a.esn0)} at Site A, so its margin is ${num(a.margin)}.`);
     $('lessonPos').textContent = '';
     $('lessonBack').hidden = true;
     $('lessonNext').hidden = true;
     $('answers').hidden = true;
+    suite.related(null, false);
     return;
   }
   $('lessonBack').hidden = false;
@@ -135,17 +147,19 @@ function renderLesson(r) {
     const l = LESSONS[S.lesson];
     $('lessonHead').textContent = 'Guided experiment';
     $('lessonTitle').textContent = l.title;
-    $('lessonText').textContent = l.text({ r });
+    suite.text($('lessonText'), l.text({ r }));
     $('lessonPos').textContent = `${S.lesson + 1} of ${LESSONS.length}`;
     $('lessonBack').disabled = S.lesson === 0;
     $('lessonNext').disabled = S.lesson === LESSONS.length - 1;
     $('answers').hidden = true;
+    suite.related(l.see, S.lesson === LESSONS.length - 1);
     return;
   }
+  suite.related(null, false);
   const c = CASES[S.caseOrder[S.caseIndex]];
   $('lessonHead').textContent = 'Diagnose it';
   $('lessonTitle').textContent = `Trouble ticket ${S.caseIndex + 1}`;
-  $('lessonText').textContent = S.answered ? `${S.answered === c.answer ? 'Correct.' : `Not quite. This was: ${ANSWERS[c.answer]}.`} ${c.why}` : 'A customer reports a problem. The table shows who is affected. Use the spectrum, waterfall and IQ plot at each test point to work out what it is, then choose the most likely cause.';
+  suite.text($('lessonText'), S.answered ? `${S.answered === c.answer ? 'Correct.' : `Not quite. This was: ${ANSWERS[c.answer]}.`} ${c.why}` : 'A customer reports a problem. The table shows who is affected. Use the spectrum, waterfall and IQ plot at each test point to work out what it is, then choose the most likely cause.');
   $('lessonPos').textContent = `${S.caseIndex + 1} of ${CASES.length}`;
   $('lessonBack').disabled = S.caseIndex === 0;
   $('lessonNext').disabled = S.caseIndex === CASES.length - 1;
@@ -158,7 +172,7 @@ function renderLesson(r) {
 }
 
 function drawFrame(addRow) {
-  const s = spectrum(S.params, S.view, S.t, BINS);
+  const s = spectrum(S.params, S.view, S.t, BINS, 26, FRAME_MS / 1000);
   const db = new Float64Array(BINS);
   // Four averaged power samples give the analyzer's noisy trace.
   for (let i = 0; i < BINS; i++) {
@@ -192,6 +206,7 @@ function render() {
 function applyLesson(i) {
   const l = LESSONS[i];
   S.lesson = i;
+  writeLesson(i);
   const base = fresh();
   S.params = { ...base, ...l.set, interferer: { ...base.interferer, ...l.set.interferer } };
   S.view = l.view;
@@ -236,7 +251,8 @@ function setMode(mode) {
 }
 
 function wire() {
-  $('modcod').append(...Object.entries(MODCODS).map(([name, v]) => new Option(`${name} (${v.toFixed(1)} dB)`, name)));
+  for (const id of ['modcod', 'neighborModcod']) $(id).append(...Object.entries(MODCODS).map(([name, v]) => new Option(`${name} (${v.toFixed(1)} dB)`, name)));
+  $('neighborModcod').addEventListener('change', (e) => { S.params.neighborModcod = e.target.value; render(); });
   $('views').append(...Object.entries(VIEWS).map(([id, v]) => {
     const b = document.createElement('button');
     b.dataset.view = id;
@@ -296,5 +312,6 @@ function loop(now) {
 buildSites();
 waterfall = createWaterfall($('waterfall'), BINS);
 wire();
+S.lesson = parseLesson(location.search, LESSONS.length);
 setMode('learn');
 requestAnimationFrame(loop);

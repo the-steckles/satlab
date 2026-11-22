@@ -43,7 +43,9 @@ function describeMeasure(run, r) {
   const atLimit = Math.abs(r.fit.delta) >= r.step - 1e-9;
   return {
     title: `${where}: ${axisName} plus one step, then fit`,
-    text: r.fit.peak === false
+    text: r.fit.held
+      ? `Moved ${r.step.toFixed(3)}°${sky} above center and read ${dbm(r.db)}. The center reading is below the tracking threshold, so these readings are noise and the antenna holds its position.`
+      : r.fit.peak === false
       ? `Moved ${r.step.toFixed(3)}°${sky} above center, to ${axisName} ${pos}°, and read ${dbm(r.db)}, which is ${change} compared with center. These three readings curve upward, so there is no peak between them. The center steps ${signed(r.fit.delta)} toward the stronger side, from ${from}° to ${to}°.`
       : `Moved ${r.step.toFixed(3)}°${sky} above center, to ${axisName} ${pos}°, and read ${dbm(r.db)}, which is ${change} compared with center. The parabola through all three readings peaks at ${signed(r.fit.delta)}, so the center moves from ${from}° to ${to}°.${atLimit ? ' That is the largest move one fit allows, so the true peak is probably farther that way.' : ''}`,
   };
@@ -134,6 +136,12 @@ export function describeController(info) {
     };
   }
   const { axis, point, fits } = info.scan;
+  if (info.lost) {
+    return {
+      steps: TRACK_STEPS, active: 6, title: 'Track lost: holding position',
+      text: 'The signal is near the noise floor. Following noise would walk the antenna away from the satellite, so the controller holds still and keeps listening. It resumes when the signal returns. If it does not, run Auto-peak.',
+    };
+  }
   if (info.phase === 'hold') {
     return {
       steps: TRACK_STEPS, active: 6, title: `Holding: next cycle in ${Math.ceil(info.nextInS)} s`,

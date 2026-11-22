@@ -58,7 +58,7 @@ export function rasterPoints(radiusDeg, spacingDeg) {
 }
 
 // Three-point az then el measurement around a center. Returns the corrected center per cycle.
-function crossScan(start, step, dwell, onReading = () => {}) {
+function crossScan(start, step, dwell, onReading = () => {}, canMove = () => true) {
   let avg = averager(dwell);
   let center = { ...start }, axis = 0, idx = 0, samples = [];
   const fits = { az: null, el: null };
@@ -79,10 +79,11 @@ function crossScan(start, step, dwell, onReading = () => {}) {
       samples.push(v);
       const record = { stage: 'measure', axis: name, point: idx, step, db: v, az: at.az, el: at.el, samples: [...samples], fits: { ...fits }, fit: null, oldCenter, newCenter: null };
       if (++idx < 3) { onReading(record); return null; }
-      const delta = parabolicOffset(samples[1], samples[0], samples[2], step);
+      const held = !canMove(samples[0]);
+      const delta = held ? 0 : parabolicOffset(samples[1], samples[0], samples[2], step);
       // An upward-curving fit has no top, so the move is only a step toward the stronger side.
       const peak = samples[1] - 2 * samples[0] + samples[2] < -1e-6;
-      fits[name] = { step, center: samples[0], minus: samples[1], plus: samples[2], delta, peak };
+      fits[name] = { step, center: samples[0], minus: samples[1], plus: samples[2], delta, peak, held };
       center = axis === 0 ? offset(center, delta, 0) : offset(center, 0, delta);
       onReading({ ...record, fit: fits[name], fits: { ...fits }, newCenter: { ...center } });
       const level = samples[0];
@@ -152,7 +153,7 @@ export function createAutoPeak({ az, el, beamwidthDeg, radiusDeg, noiseDbm, dwel
 export function createStepTrack({ az, el, beamwidthDeg, noiseDbm, dwell = 2, lossMarginDb = 4, intervalS = 0 }) {
   const records = [];
   const run = { kind: 'track', records };
-  const scan = crossScan({ az, el }, beamwidthDeg / 4, dwell, (r) => pushRecord(records, { ...r, cycle: cycles + 1 }));
+  const scan = crossScan({ az, el }, beamwidthDeg / 4, dwell, (r) => pushRecord(records, { ...r, cycle: cycles + 1 }), (v) => v >= noiseDbm + lossMarginDb);
   let monitor = averager(dwell);
   let phase = 'tracking', level = null, waiting = false, elapsed = 0, cycles = 0;
   const setLevel = (v) => {
@@ -167,17 +168,18 @@ export function createStepTrack({ az, el, beamwidthDeg, noiseDbm, dwell = 2, los
     get waiting() { return waiting; },
     get nextInS() { return waiting ? Math.max(0, intervalS - elapsed) : 0; },
     get explain() {
-      return { kind: 'track', phase: waiting ? 'hold' : 'cycle', lost: phase === 'lost', scan: scan.state, cycles, nextInS: waiting ? Math.max(0, intervalS - elapsed) : 0, intervalS, level };
+      return { kind: 'track', phase: waiting || phase === 'lost' ? 'hold' : 'cycle', lost: phase === 'lost', scan: scan.state, cycles, nextInS: waiting ? Math.max(0, intervalS - elapsed) : 0, intervalS, level };
     },
     setIntervalS(s) { intervalS = s; },
     setDwell(n) { scan.setDwell(n); monitor = averager(n); },
-    target: () => (waiting ? scan.center() : scan.target()),
+    // A controller that follows noise walks away from the satellite, so it stays put until the signal returns.
+    target: () => (waiting || phase === 'lost' ? scan.center() : scan.target()),
     advance(dt) {
       elapsed += dt;
       if (waiting && elapsed >= intervalS) { waiting = false; elapsed = 0; }
     },
     update(db) {
-      if (waiting) {
+      if (waiting || phase === 'lost') {
         const v = monitor(db);
         if (v !== null) setLevel(v);
         return;

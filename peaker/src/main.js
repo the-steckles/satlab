@@ -6,7 +6,10 @@ import { findChip, nextGroup, prevGroup } from './timeline.js';
 import { TRANSPONDER_EIRP_DBW, atmosphericLossDb, beaconEirpDbw, computeTrace, dopplerHz, fsplDb, noiseDbm, peakNear, receivedDbm, systemTempK } from './link.js';
 import { isGeostationary, isInclinedGeo, look, makeSatrec, nextPass, orbitName } from './orbit.js';
 import { createAutoPeak, createStepTrack } from './track.js';
+import { mountSuite } from '../../lib/suite.js';
+import { GUIDE, GUIDE_DONE, guideProgress } from './guide.js';
 
+const suite = mountSuite('peaker');
 const $ = (id) => document.getElementById(id);
 const BINS = 801;
 const SWEEP_S = 1 / 30;
@@ -30,6 +33,7 @@ const S = {
   centerHz: 11.7e9, spanHz: 1e6, rbwHz: 3e3, avgN: 4, avgTrace: null, holdTrace: null, topDbm: -40, bottomDbm: -130,
   jogMode: 'hold', jogSpeed: 0.2, held: new Map(), trackIntervalS: 20, trackDwellS: 1.5, scanPattern: 'spiral',
   history: [], historyWindowS: 30, hoverX: null, explainInfo: null, sweepCount: 0, stepsKey: null,
+  timeRate: 1, fixedRef: null, fixedDb: null, guideDone: 0, guideShown: -1,
   paused: false, pausedSimMs: 0, run: null, reviewIndex: 0, dirty: false,
   ctl: null, ctlKind: null, reveal: false, beamwidth: 1, trackEma: null, passDate: null, satToken: 0,
 };
@@ -83,6 +87,9 @@ function applyOmm(omm) {
   S.isGeo = isGeostationary(omm);
   $('rNorad').textContent = omm.NORAD_CAT_ID;
   $('rOrbit').textContent = orbitName(omm);
+  // A low orbit crosses the beam in seconds, so only near-geostationary satellites can be sped up.
+  $('timeRate').disabled = !S.isGeo;
+  if (!S.isGeo) { S.timeRate = 1; $('timeRate').value = '1'; }
   $('rEpoch').textContent = omm.EPOCH.slice(0, 16).replace('T', ' ') + 'Z';
 }
 
@@ -244,6 +251,7 @@ function mispoint() {
   const r = Math.min(MAX_MISPOINT_DEG, S.beamwidth * (1.5 + Math.random() * 2.5));
   S.target = { az: wrap360(l.az + (r * Math.cos(angle)) / Math.max(0.1, Math.cos((l.el * Math.PI) / 180))), el: clamp(l.el + r * Math.sin(angle), 0, 90) };
   S.az = S.target.az; S.el = S.target.el;
+  S.fixedRef = null; S.fixedDb = null; S.guideDone = 0;
   S.reveal = false;
   $('reveal').textContent = 'Reveal offset';
   $('rOff').textContent = 'hidden';
@@ -287,6 +295,7 @@ function startControl(kind) {
   const base = { az: S.az, el: S.el, beamwidthDeg: S.beamwidth, noiseDbm: noise };
   S.ctl = kind === 'peak' ? createAutoPeak({ ...base, radiusDeg: Math.min(MAX_MISPOINT_DEG * 1.25, S.beamwidth * 5), dwell: 1, pattern: S.scanPattern }) : createStepTrack({ ...base, dwell: dwellSweeps(), intervalS: S.trackIntervalS });
   S.ctlKind = kind;
+  if (kind === 'track') S.fixedRef = { az: S.az, el: S.el };
   S.run = S.ctl.run;
   $(kind === 'peak' ? 'autoPeak' : 'stepTrack').classList.add('active');
 }
@@ -344,6 +353,7 @@ function blocksFor(l, gain) {
 }
 
 function sweep(dt) {
+  S.timeOffsetMs += SWEEP_S * (S.timeRate - 1) * 1000;
   const date = simDate();
   const l = look(S.satrec, S.station, date);
   if (!l) return;
@@ -397,6 +407,10 @@ function sweep(dt) {
   // The tracking receiver is a separate narrow filter, so the analyzer view cannot disturb control.
   const trackNoise = 10 ** (noiseDbm(tempK, TRACK_BW_HZ) / 10);
   const trackDbm = 10 * Math.log10((visible ? 10 ** (carrierDbm / 10) : 0) + trackNoise * -Math.log(1 - Math.random()));
+  if (S.fixedRef && visible) {
+    const fixedGain = gainDbi(offAxisDeg(S.fixedRef.az, S.fixedRef.el, l.az, l.el), S.diameterM, f);
+    S.fixedDb = 10 * Math.log10(10 ** (receivedDbm({ eirpDbw: beaconEirpDbw(S.isGeo), rangeKm: l.rangeKm, freqMHz: S.beacon.freqMHz, elDeg: l.el, gainDbi: fixedGain }) / 10) + trackNoise);
+  } else S.fixedDb = null;
   const ema = 10 ** (trackDbm / 10);
   S.trackEma = S.trackEma === null ? ema : S.trackEma + (ema - S.trackEma) * 0.25;
 
@@ -421,8 +435,8 @@ function sweep(dt) {
 function recordHistory(t, l, db) {
   const info = S.ctl ? S.explainInfo : null;
   const phase = !info ? null : info.phase === 'search' ? 'search' : info.phase === 'hold' ? 'hold' : 'measure';
-  S.history.push({ t, az: S.az, el: S.el, db, satAz: l.az, satEl: l.el, phase });
-  while (S.history.length && S.history[0].t < t - 600e3) S.history.shift();
+  S.history.push({ t, az: S.az, el: S.el, db, satAz: l.az, satEl: l.el, phase, fixedDb: S.fixedDb });
+  if (S.history.length > 6000) S.history.shift(); // About 10 minutes of samples at any simulation speed.
 }
 
 function renderExplainer() {
@@ -448,11 +462,11 @@ function renderExplainer() {
     if (i === d.active) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current');
   });
   if ($('ctlTitle').textContent !== d.title) $('ctlTitle').textContent = d.title;
-  if ($('ctlText').textContent !== d.text) $('ctlText').textContent = d.text;
+  suite.text($('ctlText'), d.text);
   drawExplainer($('explainPlot'), rec ? recordView(S.run, rec) : S.explainInfo);
 
   const pauseLabel = S.paused ? 'Resume' : 'Pause';
-  if ($('pause').textContent !== pauseLabel) $('pause').textContent = pauseLabel;
+  if ($('pause').textContent !== pauseLabel) $('pause').textContent = $('dockPause').textContent = pauseLabel;
   $('pause').classList.toggle('active', S.paused);
   const reviewing = S.paused && records.length > 0;
   for (const id of ['prevGroup', 'prevStep', 'nextStep', 'nextGroup', 'reviewSlider']) $(id).disabled = !reviewing;
@@ -474,6 +488,7 @@ function updateControlStatus(l) {
       S.target = { az: wrap360(t.az + S.frame.az), el: clamp(t.el + S.frame.el, 0, 90) };
       const { fits } = S.ctl.explain.scan;
       const clean = fitsSettled(fits) && fits.el.center >= expectedDbm(l) - 8;
+      if (clean) S.fixedRef = { az: wrap360(t.az + S.frame.az), el: clamp(t.el + S.frame.el, 0, 90) };
       stopControl(clean ? 'Peaked.' : 'Stopped without a clean peak. The level is low or the fit did not settle.');
       $('status').className = clean ? 'ok' : 'warn';
     } else if (S.ctl.phase === 'notfound') {
@@ -490,25 +505,41 @@ function updateControlStatus(l) {
   }
 }
 
+function renderGuide(cnDb, levelDbm, expected) {
+  S.guideDone = guideProgress(S.guideDone, { cnDb, levelDbm, expectedDbm: expected, tracking: S.ctlKind === 'track' || $('program').checked });
+  if (S.guideDone === S.guideShown) return;
+  S.guideShown = S.guideDone;
+  $('guide').replaceChildren(...GUIDE.map((step, i) => {
+    const li = document.createElement('li');
+    li.textContent = step.title;
+    li.className = i < S.guideDone ? 'done' : i === S.guideDone ? 'now' : '';
+    return li;
+  }));
+  suite.text($('guideText'), GUIDE[S.guideDone]?.text ?? GUIDE_DONE);
+}
+
 function render() {
   const d = S.frameData;
   if (!d) return;
   drawSpectrum($('spectrum'), { trace: d.shown, hold: S.holdTrace, centerHz: S.centerHz, spanHz: S.spanHz, topDbm: S.topDbm, bottomDbm: S.bottomDbm, marker: d.marker });
-  waterfall.draw(S.centerHz, S.spanHz);
+  waterfall.draw(S.centerHz, S.spanHz, { lowDbm: S.bottomDbm, highDbm: S.topDbm - 10, rowS: SWEEP_S * S.timeRate });
   drawPattern($('patternPlot'), { diameterM: S.diameterM, freqHz: freqHz(), beamwidth: S.beamwidth, offAxis: S.reveal ? d.off : null });
   renderExplainer();
-  const histNote = S.reveal ? "Dashed line: the satellite's true position." : "Reveal the offset to overlay the satellite's true position as a dashed line.";
+  const histNote = `${S.reveal ? "Dashed on az and el: the satellite's true position." : "Reveal the offset to overlay the satellite's true position."}${S.fixedRef ? ' Dashed on Beacon: a dish left fixed at your last peak.' : ''}`;
   if ($('histNote').textContent !== histNote) $('histNote').textContent = histNote;
   const nowMs = simDate().getTime();
   const cursorT = S.paused ? S.run?.records[S.reviewIndex]?.t ?? null : null;
   // Widen the view while reviewing so the selected reading stays on the plot.
-  const windowS = cursorT === null ? S.historyWindowS : Math.max(S.historyWindowS, Math.min(600, Math.ceil(((nowMs - cursorT) / 1000) * 1.1)));
+  const baseWindowS = S.historyWindowS * S.timeRate;
+  const windowS = cursorT === null ? baseWindowS : Math.max(baseWindowS, Math.min(600 * S.timeRate, Math.ceil(((nowMs - cursorT) / 1000) * 1.1)));
   drawHistory($('history'), { samples: S.history, windowS, nowMs, showSat: S.reveal, hoverX: S.hoverX, cursorT });
   const level = 10 * Math.log10(S.trackEma);
   $('level').textContent = $('dockLevel').textContent = `${level.toFixed(1)} dBm`;
   // The reading is carrier plus noise, so remove the noise before forming the ratio.
   const cn = 10 ** ((level - d.trackNoiseDb) / 10) - 1;
-  $('rCn').textContent = cn >= 1 ? `${(10 * Math.log10(cn)).toFixed(1)} dB` : 'not detected';
+  renderGuide(cn > 0 ? 10 * Math.log10(cn) : -Infinity, level, d.expected);
+  $('rFixed').textContent = S.fixedDb === null ? 'no peak yet' : `${S.fixedDb.toFixed(1)} dBm`;
+  $('rCn').textContent = cn >= 2 ? `${(10 * Math.log10(cn)).toFixed(1)} dB` : 'not detected';
   $('rExpected').textContent = d.l.el > 0 ? `${d.expected.toFixed(1)} dBm` : 'below horizon';
   $('rAz').textContent = $('dockAz').textContent = `${S.az.toFixed(3)}°`;
   $('rEl').textContent = $('dockEl').textContent = `${S.el.toFixed(3)}°`;
@@ -643,6 +674,9 @@ function wire() {
     // detail 0 is a keyboard-activated click, which has no press duration to hold.
     b.addEventListener('click', (e) => { if (S.jogMode === 'step' || e.detail === 0) jog(...dir); });
   }
+  $('timeRate').addEventListener('change', (e) => { S.timeRate = S.isGeo ? +e.target.value : 1; waterfall?.clear(); });
+  $('dockPeak').addEventListener('click', () => $('autoPeak').click());
+  $('dockPause').addEventListener('click', () => $('pause').click());
   $('histWindow').addEventListener('change', (e) => { S.historyWindowS = +e.target.value; });
   for (const type of ['pointerdown', 'pointermove']) $('history').addEventListener(type, (e) => { S.hoverX = e.clientX - e.currentTarget.getBoundingClientRect().left; S.dirty = true; });
   $('history').addEventListener('pointerleave', () => { S.hoverX = null; S.dirty = true; });

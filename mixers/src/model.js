@@ -1,5 +1,5 @@
 // Scenes and measurements for the mixer simulator. Values are typical, not a specific product's datasheet.
-import { amplifier, bandpass, cascade, createGrid, createSignal, filter, levelOf, mixer, mixerLossDb, products } from '../../lib/tones.js';
+import { amplifier, bandpass, cascade, createGrid, createSignal, filter, levelOf, mixer, mixerIip3Dbm, mixerLossDb, products } from '../../lib/tones.js';
 
 const MHZ = 1e6;
 
@@ -46,14 +46,14 @@ export const SCENES = {
     inputName: 'Channel in',
     stages: [
       { id: 'cha', type: 'amp', name: 'Channel amp', gainDb: 40, oip3Dbm: 25, nfDb: 8, about: 'Sets how hard the TWTA is driven. Ground controllers can usually adjust this gain.' },
-      { id: 'twta', type: 'amp', name: 'TWTA', gainDb: 50, oip3Dbm: 54.3, nfDb: 25, about: 'A traveling-wave tube amplifier passes the signal along an electron beam and takes energy from it. The beam’s power sets a hard ceiling on RF output, called saturation.' },
+      { id: 'twta', type: 'amp', name: 'TWTA', gainDb: 50, psatDbm: 52, oip3Dbm: 57.2, nfDb: 25, about: 'A traveling-wave tube amplifier passes the signal along an electron beam and takes energy from it. The beam’s power sets a hard ceiling on RF output, called saturation.' },
       { id: 'omux', type: 'filter', name: 'Output filter', kind: 'bp', center: 'rf', bwMHz: 36, poles: 5, lossDb: 0.5, about: 'The output multiplexer removes out-of-channel products before the antenna.' },
     ],
   },
   groundDown: {
     name: 'Ground downlink', short: 'Ground down',
     intro: 'An LNB at the feed amplifies the faint downlink and converts it to L-band for the modem.',
-    defaults: { rfMHz: 12000, loMHz: 10750, rfDbm: -95, loDbm: 7, spacingMHz: 1, twoTone: false, imageOn: true, imageDbm: -85, mixerType: 'double', filtersOn: true, product: 'rfMinusLo', holdOutput: true },
+    defaults: { rfMHz: 12500, loMHz: 10750, rfDbm: -95, loDbm: 7, spacingMHz: 1, twoTone: false, imageOn: true, imageDbm: -85, mixerType: 'double', filtersOn: true, product: 'rfMinusLo', holdOutput: true },
     inputName: 'Feed',
     stages: [
       { id: 'lna', type: 'amp', name: 'LNA', gainDb: 55, oip3Dbm: 20, nfDb: 0.8, about: 'The first amplifier sets most of the receive noise figure.' },
@@ -95,7 +95,12 @@ export function filterSettings(stage, scene, p) {
   };
 }
 
-const responseOf = (s) => bandpass(s.centerMHz * MHZ, s.bwMHz * MHZ, s.poles, s.lossDb);
+// Real filters leak around their package and traces, so rejection stops growing at a stopband limit.
+export const STOPBAND_DB = 80;
+const responseOf = (s) => {
+  const h = bandpass(s.centerMHz * MHZ, s.bwMHz * MHZ, s.poles, s.lossDb), limit = 10 ** (-(s.lossDb + STOPBAND_DB) / 20);
+  return (f) => (f > 0 ? Math.max(h(f), limit) : 0);
+};
 // The response is symmetric around the center geometrically, so the 3 dB edges are not center ± half the width.
 export const filterEdges = ({ centerMHz: c, bwMHz: b }) => [Math.sqrt(b * b / 4 + c * c) - b / 2, Math.sqrt(b * b / 4 + c * c) + b / 2];
 export const filterLossAtDb = (settings, mhz) => -20 * Math.log10(responseOf(settings)(mhz * MHZ));
@@ -109,7 +114,7 @@ function buildGrid(scene, p, tones) {
 function inputTones(scene, p) {
   const half = p.spacingMHz / 2;
   const tones = p.twoTone
-    ? [{ id: 'F1', mhz: p.rfMHz - half, dbm: p.rfDbm }, { id: 'F2', mhz: p.rfMHz + half, dbm: p.rfDbm }]
+    ? [{ id: 'F1', mhz: p.rfMHz - half, dbm: p.rfDbm }, { id: 'F2', mhz: p.rfMHz + half, dbm: p.rfDbm - (p.unevenTones ? 6 : 0) }]
     : [{ id: 'F1', mhz: p.rfMHz, dbm: p.rfDbm }];
   if (p.imageOn && !scene.noImage && !scene.noLo) tones.push({ id: 'IMG', mhz: imageMHz(p), dbm: p.imageDbm });
   return tones;
@@ -150,7 +155,7 @@ function imageNoiseFactor(scene, p) {
 function cascadeSpec(stage, scene, p, pastMixer) {
   const gainDb = stageGainDb(stage, scene, p, pastMixer);
   if (stage.type === 'amp') return { gainDb, nfDb: stage.nfDb, oip3Dbm: stage.oip3Dbm };
-  if (stage.type === 'mixer') return { gainDb, nfDb: -gainDb, oip3Dbm: stage.iip3Dbm + gainDb };
+  if (stage.type === 'mixer') return { gainDb, nfDb: -gainDb, oip3Dbm: mixerIip3Dbm(stage.iip3Dbm, p.loDbm) + gainDb };
   return { gainDb, nfDb: -gainDb };
 }
 
@@ -185,7 +190,12 @@ export function runScene(sceneId, params) {
   const nodeFor = (id, name) => {
     const c = cascade(specs.length ? specs : [{ gainDb: 0, nfDb: 0 }]);
     const kindOf = (x) => classify(x, grid.sources, signOf(scene, p), pastMixer);
-    const list = products(sig, -220).map((x) => ({ ...x, kind: kindOf(x), parts: x.parts.map((part) => ({ ...part, kind: kindOf(part) })) }));
+    const list = products(sig, -220).map((x) => {
+      const parts = x.parts.map((part) => ({ ...part, kind: kindOf(part) }));
+      // An image comes from a different transmitter, so it adds in power rather than in phase with the carrier.
+      const uncorrelated = parts.length > 1 && parts.some((part) => part.kind === 'image');
+      return { ...x, dbm: uncorrelated ? 10 * Math.log10(parts.reduce((sum, part) => sum + 10 ** (part.dbm / 10), 0)) : x.dbm, kind: kindOf(x), parts };
+    });
     const nfDb = pastMixer ? 10 * Math.log10(10 ** (c.nfDb / 10) + imageNoiseFactor(scene, p)) : c.nfDb;
     return { id, name, products: list, pastMixer, gainDb: c.gainDb, nfDb, iip3Dbm: c.iip3Dbm, oip3Dbm: c.oip3Dbm };
   };
@@ -197,6 +207,27 @@ export function runScene(sceneId, params) {
     nodes.push({ ...nodeFor(stage.id, stage.name), bypassed: stage.type === 'filter' && !filterSettings(stage, scene, p).on });
   }
   return { scene, params: p, nodes, sources: grid.sources, wantedMHz: wantedMHz(scene, p), imageMHz: scene.noLo ? null : imageMHz(p), inverted: isInverted(scene, p) };
+}
+
+// How the filters directly before a test point shape the noise at each frequency, in dB. An amplifier or
+// mixer before them is where that noise was made, so the walk stops there.
+export function noiseShape(result, nodeIndex) {
+  const filters = [];
+  for (let i = nodeIndex - 1; i >= 0 && result.scene.stages[i].type === 'filter'; i--) {
+    const f = filterSettings(result.scene.stages[i], result.scene, result.params);
+    if (f.on) filters.push(f);
+  }
+  return (mhz) => filters.reduce((db, f) => db - (filterLossAtDb(f, mhz) - f.lossDb), 0);
+}
+
+// Backoff of a tube with a defined saturation point. Power is the total of every signal entering it.
+export function amplifierBackoff(result, stageId) {
+  const index = result.scene.stages.findIndex((s) => s.id === stageId), stage = result.scene.stages[index];
+  if (stage?.psatDbm === undefined) return null;
+  const total = (node) => 10 * Math.log10(node.products.reduce((sum, x) => sum + 10 ** (x.dbm / 10), 0));
+  // A Saleh tube saturates at an input 6 dB above where its small-signal gain would reach the same output.
+  const saturatingInputDbm = stage.psatDbm - stage.gainDb + 6;
+  return { psatDbm: stage.psatDbm, iboDb: saturatingInputDbm - total(result.nodes[index]), oboDb: stage.psatDbm - total(result.nodes[index + 1]) };
 }
 
 export const noiseFloorDbm = (node, rbwHz) => -174 + 10 * Math.log10(rbwHz) + node.nfDb + node.gainDb;
@@ -228,7 +259,7 @@ function wantedLevel(sceneId, p, nodeIndex, spur) {
 
 // Output against input: compression from one tone, third-order products from two.
 export function sweep(sceneId, params, nodeIndex, points = 25) {
-  const scene = SCENES[sceneId], base = { ...scene.defaults, ...params, imageOn: false };
+  const scene = SCENES[sceneId], base = { ...scene.defaults, ...params, imageOn: false, unevenTones: false };
   const iip3 = runScene(sceneId, { ...base, twoTone: false }).nodes[nodeIndex].iip3Dbm;
   const center = Number.isFinite(iip3) ? iip3 : base.rfDbm + 30;
   const from = center - 45, to = center + 6, out = [];
@@ -239,16 +270,19 @@ export function sweep(sceneId, params, nodeIndex, points = 25) {
     out.push({ pin, single, tone: wantedLevel(sceneId, two, nodeIndex, [1, 0]), im3: wantedLevel(sceneId, two, nodeIndex, [2, -1]) });
   }
   const first = out[0], gain = first.single - first.pin;
-  let p1dB = null;
-  for (let i = 1; i < out.length; i++) {
-    const a = first.pin + (out[i - 1].pin - first.pin) + gain - out[i - 1].single, b = out[i].pin + gain - out[i].single;
-    if (a < 1 && b >= 1) {
-      const t = (1 - a) / (b - a), pin = out[i - 1].pin + t * (out[i].pin - out[i - 1].pin);
-      p1dB = { pin, pout: pin + gain - 1 };
-      break;
+  const compressedAt = (key) => {
+    const small = first[key] - first.pin;
+    for (let i = 1; i < out.length; i++) {
+      const a = out[i - 1].pin + small - out[i - 1][key], b = out[i].pin + small - out[i][key];
+      if (a < 1 && b >= 1) {
+        const pin = out[i - 1].pin + ((1 - a) / (b - a)) * (out[i].pin - out[i - 1].pin);
+        return { pin, pout: pin + small - 1 };
+      }
     }
-  }
+    return null;
+  };
+  const p1dB = compressedAt('single'), p1dBTwoTone = compressedAt('tone');
   const low = out.find((x) => Number.isFinite(x.im3)) ?? first;
   const oip3 = Number.isFinite(low.im3) ? low.tone + (low.tone - low.im3) / 2 : null;
-  return { points: out, gain, p1dB, oip3, iip3: oip3 === null ? null : oip3 - gain };
+  return { points: out, gain, p1dB, p1dBTwoTone, oip3, iip3: oip3 === null ? null : oip3 - gain };
 }

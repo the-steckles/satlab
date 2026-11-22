@@ -1,12 +1,14 @@
 import { drawConstellation } from '../../lib/constellation.js';
 import { COLORS as C, prepare, ticks, verticalLabel } from '../../lib/plot.js';
 import { LESSONS, rampCaption } from './lessons.js';
-import { createReceiver, DEFAULTS, iqSamples, levels, MODCODS, monitor, settle, STATES, stepReceiver, videoState } from './model.js';
+import { ACQUIRE_DB, createReceiver, DEFAULTS, iqSamples, levels, MODCODS, monitor, settle, STATES, stepReceiver, videoState } from './model.js';
 import { createDecoder, drawSource } from './video.js';
+import { mountSuite, parseLesson, writeLesson } from '../../lib/suite.js';
 
+const suite = mountSuite('dvbs2', { jumps: [['lessonBox', 'Lesson'], ['videoRow', 'Video'], ['controlBox', 'Controls']], action: { id: 'ramp', label: 'Ramp' } });
 const $ = (id) => document.getElementById(id);
-const FRAME_MS = 80, HISTORY_S = 40, RAMP_DB_PER_S = 1.5, RAMP_TOP_DB = 12;
-const S = { p: { ...DEFAULTS }, rx: createReceiver(), lesson: 0, block: 'demod', t: 0, last: 0, paused: false, ramping: false, rampView: false, shownState: '', history: [] };
+const FRAME_MS = 80, HISTORY_S = 40, RAMP_DB_PER_S = 1.5, RAMP_TOP_DB = 12, RAMP_BOTTOM_DB = -25;
+const S = { p: { ...DEFAULTS }, rx: createReceiver(), lesson: 0, block: 'demod', t: 0, last: 0, paused: false, ramping: false, rampDir: 1, rampView: false, lastMer: null, shownState: '', history: [] };
 const num = (v, unit = 'dB') => (Number.isFinite(v) ? `${v.toFixed(1).replace('-', '−')} ${unit}` : '–');
 
 const BLOCKS = [
@@ -52,7 +54,7 @@ function renderChain() {
 function drawHistory() {
   const { ctx, w, h } = prepare($('history'));
   const m = { l: 42, r: 10, t: 8, b: 26 }, pw = w - m.l - m.r, ph = h - m.t - m.b, top = 20, bottom = -20;
-  const X = (t) => m.l + (1 - (S.t - t) / HISTORY_S) * pw, Y = (v) => m.t + ((top - Math.max(bottom, Math.min(top, v))) / (top - bottom)) * ph;
+  const X = (t) => m.l + (1 - (S.t - t) / HISTORY_S) * pw, Y = (v) => m.t + ((top - Math.min(top, v)) / (top - bottom)) * ph;
   ctx.strokeStyle = C.grid;
   ctx.fillStyle = C.axis;
   ctx.textAlign = 'right';
@@ -67,14 +69,17 @@ function drawHistory() {
   const need = levels(S.p).need;
   ctx.strokeStyle = C.marker; ctx.setLineDash([4, 4]);
   ctx.beginPath(); ctx.moveTo(m.l, Y(need)); ctx.lineTo(m.l + pw, Y(need)); ctx.stroke();
+  ctx.setLineDash([1, 3]);
+  ctx.beginPath(); ctx.moveTo(m.l, Y(need + ACQUIRE_DB)); ctx.lineTo(m.l + pw, Y(need + ACQUIRE_DB)); ctx.stroke();
   ctx.setLineDash([]);
   ctx.lineWidth = 2;
-  for (const [key, color] of [['carrier', '#0f9c7e'], ['overlay', '#d0559a']]) {
+  for (const [key, color] of [['mer', '#8fa3b0'], ['carrier', '#0f9c7e'], ['overlay', '#d0559a']]) {
     ctx.strokeStyle = color;
     ctx.beginPath();
     let drawing = false;
     for (const row of S.history) {
-      if (!Number.isFinite(row[key])) { drawing = false; continue; }
+      // A value below the axis is a gap, not a flat line along the bottom.
+      if (!Number.isFinite(row[key]) || row[key] < bottom) { drawing = false; continue; }
       if (drawing) ctx.lineTo(X(row.t), Y(row[key])); else ctx.moveTo(X(row.t), Y(row[key]));
       drawing = true;
     }
@@ -89,7 +94,10 @@ function renderStatus() {
   $('rxState').textContent = STATES[S.rx.state];
   $('rxState').dataset.health = S.rx.state === 'locked' ? (S.rx.source === 'overlay' ? 'taken' : 'ok') : S.rx.state === 'degraded' || S.rx.state === 'fecLock' ? 'warn' : 'bad';
   $('rxSource').textContent = S.rx.source === null ? 'None' : S.rx.source === 'overlay' ? 'Overlay' : 'Carrier';
+  S.lastMer = iq.merDb;
   $('mer').textContent = num(iq.merDb);
+  $('monMer').textContent = iq.merDb === null ? 'no lock' : `${num(iq.merDb)} (normal ${num(S.p.cnDb)})`;
+  $('monCarrier').textContent = `${m.carrierChangeDb > -0.05 ? '0.0' : num(m.carrierChangeDb, '').trim()} dB`;
   $('esCarrier').textContent = num(l.carrierEs);
   $('esOverlay').textContent = S.p.overlayOn ? num(l.overlayEs) : '–';
   $('esNeed').textContent = num(l.need);
@@ -107,10 +115,11 @@ function renderLesson() {
   const lesson = LESSONS[S.lesson];
   S.shownState = `${S.rx.state}/${S.rx.source}`;
   $('lessonTitle').textContent = S.rampView ? 'Overlay ramp' : lesson.title;
-  $('lessonText').textContent = S.rampView ? rampCaption(S.rx, S.p.authOn) : lesson.text({ p: S.p, l: levels(S.p), rx: S.rx });
+  suite.text($('lessonText'), S.rampView ? rampCaption(S.rx, S.p.authOn) : lesson.text({ p: S.p, l: levels(S.p), rx: S.rx }));
   $('lessonPos').textContent = `${S.lesson + 1} of ${LESSONS.length}`;
   $('lessonBack').disabled = S.lesson === 0;
   $('lessonNext').disabled = S.lesson === LESSONS.length - 1;
+  suite.related(S.rampView ? null : lesson.see, false);
 }
 
 function syncControls() {
@@ -122,8 +131,10 @@ function syncControls() {
   $('overlayOn').checked = S.p.overlayOn;
   $('authOn').checked = S.p.authOn;
   $('ratioDb').disabled = !S.p.overlayOn;
-  $('ramp').textContent = S.ramping ? 'Stop ramp' : 'Run overlay ramp';
-  $('ramp').setAttribute('aria-pressed', S.ramping);
+  $('ramp').textContent = S.ramping && S.rampDir > 0 ? 'Stop ramp' : 'Ramp up';
+  $('ramp').setAttribute('aria-pressed', S.ramping && S.rampDir > 0);
+  $('rampDown').textContent = S.ramping && S.rampDir < 0 ? 'Stop ramp' : 'Ramp down';
+  $('rampDown').setAttribute('aria-pressed', S.ramping && S.rampDir < 0);
   $('pause').textContent = S.paused ? 'Resume' : 'Pause';
   $('pause').setAttribute('aria-pressed', S.paused);
 }
@@ -149,11 +160,37 @@ function renderAll() {
 
 function applyLesson(index) {
   S.lesson = index;
+  writeLesson(index);
   S.ramping = false;
   S.rampView = false;
   for (let i = 0; i <= index; i++) Object.assign(S.p, LESSONS[i].set);
   S.rx = settle(S.p, LESSONS[index].peakDb);
   renderAll();
+}
+
+// While paused the loop is idle, so a changed setting has to redraw the display itself.
+function settingChanged() {
+  syncControls();
+  renderLesson();
+  if (!S.paused) return;
+  renderChain();
+  renderStatus();
+  drawHistory();
+  renderVideo();
+}
+
+function startRamp(dir) {
+  S.ramping = !(S.ramping && S.rampDir === dir);
+  S.rampDir = dir;
+  if (S.ramping) {
+    S.rampView = true;
+    S.p.overlayOn = true;
+    S.paused = false;
+    if (dir > 0 && S.p.ratioDb >= RAMP_TOP_DB) { S.p.ratioDb = RAMP_BOTTOM_DB; S.rx = createReceiver(); }
+    if (dir < 0 && S.p.ratioDb <= RAMP_BOTTOM_DB) S.ramping = false;
+  }
+  syncControls();
+  renderLesson();
 }
 
 function wire() {
@@ -167,19 +204,15 @@ function wire() {
     zones[zone].append(b);
   }
   $('modcod').append(...Object.entries(MODCODS).map(([name, v]) => new Option(`${name} (${v.toFixed(1)} dB)`, name)));
-  $('ratioDb').addEventListener('input', (e) => { S.ramping = false; S.rampView = false; S.p.ratioDb = +e.target.value; syncControls(); renderLesson(); });
-  $('cnDb').addEventListener('input', (e) => { S.p.cnDb = +e.target.value; syncControls(); renderLesson(); });
-  $('modcod').addEventListener('change', (e) => { S.p.modcod = e.target.value; renderLesson(); });
-  $('overlayOn').addEventListener('change', (e) => { S.p.overlayOn = e.target.checked; S.ramping = false; syncControls(); });
-  $('authOn').addEventListener('change', (e) => { S.p.authOn = e.target.checked; renderLesson(); });
-  $('ramp').addEventListener('click', () => {
-    S.ramping = !S.ramping;
-    if (S.ramping) { S.rampView = true; S.p.overlayOn = true; S.paused = false; if (S.p.ratioDb >= RAMP_TOP_DB) { S.p.ratioDb = -25; S.rx = createReceiver(); } }
-    syncControls();
-    renderLesson();
-  });
+  $('ratioDb').addEventListener('input', (e) => { S.ramping = false; S.rampView = false; S.p.ratioDb = +e.target.value; settingChanged(); });
+  $('cnDb').addEventListener('input', (e) => { S.p.cnDb = +e.target.value; settingChanged(); });
+  $('modcod').addEventListener('change', (e) => { S.p.modcod = e.target.value; settingChanged(); });
+  $('overlayOn').addEventListener('change', (e) => { S.p.overlayOn = e.target.checked; S.ramping = false; settingChanged(); });
+  $('authOn').addEventListener('change', (e) => { S.p.authOn = e.target.checked; settingChanged(); });
+  $('ramp').addEventListener('click', () => startRamp(1));
+  $('rampDown').addEventListener('click', () => startRamp(-1));
   $('pause').addEventListener('click', () => { S.paused = !S.paused; syncControls(); });
-  $('restart').addEventListener('click', () => { S.history = []; applyLesson(0); });
+  $('restart').addEventListener('click', () => { S.history = []; S.p = { ...DEFAULTS }; applyLesson(0); });
   $('lessonBack').addEventListener('click', () => applyLesson(S.lesson - 1));
   $('lessonNext').addEventListener('click', () => applyLesson(S.lesson + 1));
   window.addEventListener('resize', () => { drawHistory(); renderStatus(); });
@@ -192,13 +225,13 @@ function loop(now) {
     if (!S.paused) {
       S.t += dt;
       if (S.ramping) {
-        S.p.ratioDb = Math.min(RAMP_TOP_DB, Math.round((S.p.ratioDb + RAMP_DB_PER_S * dt) * 100) / 100);
-        if (S.p.ratioDb >= RAMP_TOP_DB) S.ramping = false;
+        S.p.ratioDb = Math.max(RAMP_BOTTOM_DB, Math.min(RAMP_TOP_DB, Math.round((S.p.ratioDb + S.rampDir * RAMP_DB_PER_S * dt) * 100) / 100));
+        if (S.p.ratioDb >= RAMP_TOP_DB || S.p.ratioDb <= RAMP_BOTTOM_DB) S.ramping = false;
       }
       S.rx = stepReceiver(S.rx, S.p, dt);
       if (`${S.rx.state}/${S.rx.source}` !== S.shownState) renderLesson();
       const l = levels(S.p);
-      S.history.push({ t: S.t, carrier: l.carrierEs, overlay: l.overlayEs });
+      S.history.push({ t: S.t, carrier: l.carrierEs, overlay: l.overlayEs, mer: S.lastMer });
       while (S.history.length && S.history[0].t < S.t - HISTORY_S) S.history.shift();
       syncControls();
       renderChain();
@@ -211,5 +244,5 @@ function loop(now) {
 }
 
 wire();
-applyLesson(0);
+applyLesson(parseLesson(location.search, LESSONS.length));
 requestAnimationFrame(loop);

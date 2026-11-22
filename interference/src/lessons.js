@@ -1,5 +1,6 @@
 // Guided experiments. Each sets a scenario, then explains it using the live link numbers.
-import { lockShare } from './model.js';
+import { evaluate, lockShare, usableShare } from './model.js';
+import { throughputMbps } from '../../lib/modcods.js';
 
 const db = (v) => (!Number.isFinite(v) ? '–' : `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(1)}`);
 const plain = (v) => (!Number.isFinite(v) ? '–' : (Math.abs(v) < 0.05 ? 0 : v).toFixed(1).replace('-', '−'));
@@ -28,7 +29,16 @@ export const LESSONS = [
   },
   {
     title: 'Swept interference', set: I({ kind: 'swept', icDb: 0, offsetMHz: 0, spanMHz: 32, sweepS: 8 }), view: 'A',
-    text: ({ r }) => `This signal repeatedly sweeps across the transponder. It only hurts while crossing a carrier, so the link is usable about ${Math.round(lockShare(r.params) * 100)}% of the time. Watch the diagonal track on the waterfall. Intermittent errors with a repeating period are a strong clue that a time-based view will catch and a single sweep could miss.`,
+    see: { href: '/dvbs2/?lesson=8', text: 'See why recovery lags: receiver hysteresis' },
+    text: ({ r }) => `This signal repeatedly sweeps across the transponder. It only hurts while crossing a carrier, so the link is above threshold about ${Math.round(lockShare(r.params) * 100)}% of the time. A modem also needs a couple of seconds to relock after each hit, so usable time is closer to ${Math.round(usableShare(r.params) * 100)}%. Watch the diagonal track on the waterfall. Intermittent errors with a repeating period are a strong clue that a time-based view will catch and a single sweep could miss.`,
+  },
+  {
+    title: 'Reading the IQ plot: a tone', set: { ...I({ kind: 'cw', icDb: -9, offsetMHz: -8 }), modcod: 'QPSK 3/4' }, view: 'A',
+    text: ({ r }) => `QPSK makes this easy to see. A CW tone adds a fixed-size vector that rotates against your symbols, so each point becomes a ring. Modulation error ratio (MER), measured from how far dots sit from the crosses, is about ${plain(r.sites.A.esn0)} dB. On the analyzer, the same tone is one thin line, and on the waterfall a steady stripe.`,
+  },
+  {
+    title: 'Reading the IQ plot: a modulated signal', set: { ...I({ kind: 'narrow', narrowMHz: 3, icDb: -9, offsetMHz: -8 }), modcod: 'QPSK 3/4' }, view: 'A',
+    text: ({ r }) => `This interferer has the same power, but it is modulated across 3 MHz. It behaves like extra noise, so each point becomes a round cloud instead of a ring, with Es/N0 at ${plain(r.sites.A.esn0)} dB. Rings point to a tone, and clouds point to noise or a modulated signal. The analyzer confirms it: this one has visible width.`,
   },
   {
     title: 'Uplink or downlink?', set: I({ kind: 'cw', path: 'downlink', icDb: -7, offsetMHz: -8 }), view: 'A',
@@ -40,6 +50,7 @@ export const LESSONS = [
   },
   {
     title: 'Power robbing', set: I({ kind: 'cw', icDb: 10, offsetMHz: 0 }), view: 'output',
+    see: { href: '/mixers/?scene=satTx&lesson=3', text: 'Review compression in the TWTA: Mixer Lab' },
     text: ({ r }) => `A strong uplink signal sits between the carriers and overlaps neither, yet takes ${Math.round(r.shares.interference * 100)}% of the input. Near saturation the output can barely grow, so the tube’s fixed output is divided among more input. A strong tone is especially harsh, because a limiter suppresses weaker signals beyond their proportional share. Both carriers fall ${plain(r.robbedDb)} dB. Their uplink noise falls with them, but the downlink noise at the ground does not, and intermodulation rises, so margin is ${plain(r.sites.A.margin)} dB.`,
   },
   {
@@ -47,12 +58,17 @@ export const LESSONS = [
     text: ({ r }) => `In fixed-gain mode, power robbing is pure physics: no circuit decides to reduce anything, the tube simply runs out of power. Some transponders also have automatic level control (ALC), turned on here. ALC is a real protection feature. It measures the input and adds attenuation to keep the tube’s drive constant. The output total stays put, and the carriers still drop ${plain(r.robbedDb)} dB because the attenuator turns everything down together. Either way, a strong signal takes power from its neighbors.`,
   },
   {
+    title: 'When ALC helps', set: { alc: true, trimDb: -5, neighborTrimDb: -5 }, view: 'output',
+    text: ({ r }) => { const fixed = evaluate({ ...r.params, alc: false }); return `ALC exists for this case. Both uplinks have faded 5 dB, perhaps from rain at the transmit site. With ALC, the transponder adds ${plain(r.tp.alcDb)} dB of gain to restore its output, and your Es/N0 is ${plain(r.sites.A.esn0)} dB. In fixed-gain mode it would be ${plain(fixed.sites.A.esn0)} dB. The tradeoff is the last lesson: ALC cannot tell a fade from a strong interferer, and its range is limited.`; },
+  },
+  {
     title: 'Rain is not interference', set: { rainDb: 6 }, view: 'A',
-    text: ({ r }) => `Rain at Site A cuts the carrier ${plain(-r.sites.A.carrierDeltaDb)} dB and raises the noise floor ${plain(r.sites.A.floorDeltaDb)} dB, because wet atmosphere radiates thermal noise. Site B is unaffected. Before reporting interference, rule out weather and pointing, and check whether a beacon dropped by the same amount.`,
+    see: { href: '/peaker/', text: 'See how a beacon is measured: Peaker' },
+    text: ({ r }) => `Rain at Site A cuts the carrier ${plain(-r.sites.A.carrierDeltaDb)} dB and raises the noise floor ${plain(r.sites.A.floorDeltaDb)} dB, because wet atmosphere radiates thermal noise. Site B is unaffected. The beacon fell ${plain(-r.sites.A.beaconDeltaDb)} dB too, which is the giveaway. A beacon drop means propagation or pointing, while interference leaves the beacon alone.`,
   },
   {
     title: 'Responding: move or harden', set: { ...I({ kind: 'cw', icDb: -7, offsetMHz: -8 }), carrierMHz: -2, neighborMHz: 8 }, view: 'A',
-    text: ({ r }) => `Moving your carrier off the interference restores it to ${r.sites.A.state} with ${plain(r.sites.A.margin)} dB margin. If you can’t move, try a more robust MODCOD in the controls, trading throughput for margin. Raising power rarely helps in a shared transponder, because it takes power from other users.`,
+    text: ({ r }) => `Moving your carrier off the interference restores it to ${r.sites.A.state} with ${plain(r.sites.A.margin)} dB margin. If you can’t move, try a more robust MODCOD in the controls. Dropping from ${r.params.modcod} to QPSK 3/4 would cut throughput from about ${throughputMbps(r.params.modcod, r.params.rsMHz).toFixed(0)} to ${throughputMbps('QPSK 3/4', r.params.rsMHz).toFixed(0)} Mbit/s in exchange for about ${plain(r.need - 4.03)} dB of margin. Raising power rarely helps in a shared transponder, because it takes power from other users.`,
   },
   {
     title: 'Responding: report it', set: I({ kind: 'partial', icDb: 3, offsetMHz: -8, bwMHz: 6 }), view: 'input',

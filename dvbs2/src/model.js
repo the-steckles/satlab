@@ -1,27 +1,35 @@
 // Receiver-level model of two overlapping DVB-S2 signals on a fictional satellite. Symbols are random and
 // the video is drawn locally. There is deliberately no bitstream, encoder, IQ export or transmit path.
 import { constellation, gaussian, merDb } from '../../lib/constellation.js';
+import { MODCODS, RELOCK_STEPS } from '../../lib/modcods.js';
+import { twtaOutput } from '../../lib/twta.js';
 
-// Quasi-error-free Es/N0 thresholds, ETSI EN 302 307-1.
-export const MODCODS = { 'QPSK 1/2': 1.0, 'QPSK 3/4': 4.03, '8PSK 2/3': 6.62, '16APSK 3/4': 10.21 };
+export { MODCODS };
 export const DEFAULTS = { cnDb: 16, modcod: '8PSK 2/3', overlayOn: true, ratioDb: -25, authOn: false };
 export const STATES = {
-  locked: 'Locked', degraded: 'Degraded', fecFail: 'Demod locked, FEC failing', lost: 'Signal lost', searching: 'Searching',
+  locked: 'Locked', degraded: 'Marginal', fecFail: 'Demod locked, FEC failing', lost: 'Lost', searching: 'Searching',
   frameSync: 'Frame sync', carrierLock: 'Carrier lock', fecLock: 'FEC lock',
 };
 
-const SECONDS = { lost: 0.7, searching: 0.8, frameSync: 0.5, carrierLock: 0.4, fecLock: 0.4 };
-const ACQUIRE_DB = 1.5; // Illustrative: a receiver needs a little more signal to acquire than to hold lock.
+const SECONDS = { lost: 0.7, ...RELOCK_STEPS };
+export const ACQUIRE_DB = 1.5; // Illustrative: a receiver needs a little more signal to acquire than to hold lock.
 const DEMOD_BELOW_DB = 3; // Illustrative: carrier and frame tracking outlast the FEC by a few dB.
 const TRACKING = new Set(['carrierLock', 'fecLock', 'locked', 'degraded', 'fecFail']);
 const DECODING = new Set(['fecLock', 'locked', 'degraded']);
 const lin = (db) => 10 ** (db / 10);
 const dB = (x) => 10 * Math.log10(x);
 
-// Es/N0 of each signal, treating the other one as noise. Carrier power is the reference.
+const NOMINAL_DRIVE = lin(-6); // The transponder's normal input backoff, matching Interference Lab.
+
+// Es/(N+I) of each signal, treating the other as noise. Both pass through one TWTA, so a strong input
+// lowers the gain for everything while the downlink noise at the receiver stays put.
 export function levels(p) {
-  const n = lin(-p.cnDb), o = p.overlayOn ? lin(p.ratioDb) : 0;
-  return { n, o, need: MODCODS[p.modcod], carrierEs: dB(1 / (n + o)), overlayEs: o > 0 ? dB(o / (n + 1)) : -Infinity, totalDb: dB(1 + o) };
+  const n = lin(-p.cnDb), o = p.overlayOn ? lin(p.ratioDb) : 0, drive = NOMINAL_DRIVE * (1 + o);
+  const g = (twtaOutput(drive) / drive) / (twtaOutput(NOMINAL_DRIVE) / NOMINAL_DRIVE);
+  return {
+    n, o, g, need: MODCODS[p.modcod], carrierEs: dB(g / (n + g * o)), overlayEs: o > 0 ? dB((g * o) / (n + g)) : -Infinity,
+    totalDb: dB(twtaOutput(drive) / twtaOutput(NOMINAL_DRIVE)), carrierDb: dB(g),
+  };
 }
 
 export const createReceiver = () => ({ state: 'locked', source: 'carrier', timer: 0 });
@@ -78,7 +86,7 @@ export function videoState(rx, p) {
 export function iqSamples(p, rx, count = 1100, rand = Math.random) {
   const l = levels(p), ideal = constellation(p.modcod);
   const ref = rx.source ?? (l.o > 1 ? 'overlay' : 'carrier'), refPower = ref === 'overlay' ? l.o : 1, otherPower = ref === 'overlay' ? 1 : l.o;
-  const other = Math.sqrt(otherPower / refPower), sigma = Math.sqrt(l.n / refPower / 2), tracking = TRACKING.has(rx.state);
+  const other = Math.sqrt(otherPower / refPower), sigma = Math.sqrt(l.n / (l.g * refPower) / 2), tracking = TRACKING.has(rx.state);
   const samples = [];
   for (let n = 0; n < count; n++) {
     const s = ideal[Math.floor(rand() * ideal.length)], x = ideal[Math.floor(rand() * ideal.length)], phase = 2 * Math.PI * rand();
@@ -100,6 +108,7 @@ export function monitor(p, rx) {
   const margin = rx.source ? (onOverlay ? l.overlayEs : l.carrierEs) - l.need : -Infinity;
   return {
     levelRiseDb: l.totalDb,
+    carrierChangeDb: l.carrierDb,
     levelAlarm: l.totalDb >= 1,
     // These fields live inside the decoded stream, so nothing is known about them until FEC locks.
     serviceId: !decoding ? 'waiting for FEC' : onOverlay ? 'UNEXPECTED' : 'SATLAB-1 / CH 1',

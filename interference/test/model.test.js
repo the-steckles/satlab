@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CASES, DEFAULTS, evaluate, interfererBand, iqSamples, lockShare, MODCODS, spectrum, ANSWERS, carrierToImDb, twtaOutput } from '../src/model.js';
+import { CASES, DEFAULTS, evaluate, interfererBand, iqSamples, lockShare, MODCODS, spectrum, ANSWERS, carrierToImDb, twtaOutput, usableShare } from '../src/model.js';
 
 const near = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, `${msg ?? ''} expected ${b} ± ${tol}, got ${a}`);
 const withI = (i, extra = {}) => ({ ...extra, interferer: { ...DEFAULTS.interferer, on: true, ...i } });
@@ -211,4 +211,38 @@ test('a dominant tone suppresses other carriers more than noise-like interferenc
 test('every diagnosis ticket has a listed answer', () => {
   for (const c of CASES) assert.ok(ANSWERS[c.answer], c.id);
   assert.ok(CASES.some((c) => c.answer === 'none'));
+});
+
+test('each carrier is judged against its own MODCOD', () => {
+  const hit = (modcod) => A(evaluate({ ...withI({ kind: 'cw', icDb: -7, offsetMHz: 8 }), modcod })).neighborMargin;
+  assert.equal(hit('QPSK 1/2'), hit('32APSK 3/4'));
+  const robust = A(evaluate({ ...withI({ kind: 'cw', icDb: -7, offsetMHz: 8 }), neighborModcod: 'QPSK 1/2' }));
+  assert.equal(robust.neighborState, 'Locked');
+});
+
+test('the beacon moves with rain and pointing but not with interference', () => {
+  assert.equal(A(evaluate({ rainDb: 6 })).beaconDeltaDb, -6);
+  assert.equal(B(evaluate({ rainDb: 6 })).beaconDeltaDb, 0);
+  assert.equal(A(evaluate(withI({ kind: 'cw', icDb: 5, offsetMHz: -8 }))).beaconDeltaDb, 0);
+});
+
+test('ALC restores a faded uplink and has a finite range', () => {
+  const faded = { trimDb: -5, neighborTrimDb: -5 };
+  assert.ok(A(evaluate({ ...faded, alc: true })).esn0 > A(evaluate(faded)).esn0 + 0.5);
+  const r = evaluate({ ...withI({ kind: 'cw', icDb: 20, offsetMHz: 0 }), iboDb: 15, alc: true });
+  assert.ok(r.tp.alcDb >= -15);
+  assert.ok(r.tp.drive > 10 ** (-15 / 10), 'the input overwhelmed the attenuator');
+});
+
+test('usable time is shorter than time above threshold', () => {
+  const p = withI({ kind: 'swept', offsetMHz: 0, spanMHz: 30, icDb: 3, sweepS: 8 });
+  assert.ok(usableShare(p) < lockShare(p) - 0.05);
+  assert.equal(usableShare(evaluate({}).params), 1);
+});
+
+test('a fast sweep paints a continuous track within one analyzer dwell', () => {
+  const p = withI({ kind: 'swept', offsetMHz: 0, spanMHz: 30, sweepWidthMHz: 0, sweepS: 2, icDb: 0 });
+  const raised = (dwell) => { const clean = spectrum(withI({ kind: 'cw', icDb: -60, offsetMHz: 25 }), 'input', 0.5), s = spectrum(p, 'input', 0.5, 512, 26, dwell); return s.db.filter((v, n) => v > clean.db[n] + 1).length; };
+  assert.equal(raised(0), 1);
+  assert.ok(raised(0.09) > 15);
 });

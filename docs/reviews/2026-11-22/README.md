@@ -46,15 +46,21 @@ Status values: `todo`, `done`. Pass 1 was completed on 2026-11-22, with model ch
 | DVB-S2 | Identity and signature shown before decoding | Show "waiting" until FEC lock | done |
 | DVB-S2 | "Es/N0" includes interference | Relabel as Es/(N+I) | done |
 
-### Pass 2 backlog
+### Pass 2
 
-- **Suite:** numbered learning path, "next lab" links, `?lesson=` deep links, shared MODCOD table and state names, consistent reset wording.
-- **Cross-lab physics:** DVB-S2 level rise should reflect transponder compression. Relock time should match between Interference and DVB-S2. Relabel swept "usable" time as "above threshold".
-- **Mixer:** carry 12500 MHz through all scenes, two-tone compression curve, uncorrelated image addition, visible TWTA saturation with IBO/OBO readouts, LO drive affecting linearity, realistic stopband and noise shaping, visible spectral inversion, stale lesson text, phone flow.
-- **Interference:** independent MODCOD for the other carrier, beacon readout, C/N breakdown, ALC benefit case and finite range, IQ and signal-type lesson, MODCOD throughput, phone flow.
-- **DVB-S2:** MER in monitoring with a trend, ramp-down, history clipping, updates while paused, Restart restoring defaults, phone transport bar.
-- **Peaker:** guided first task, time acceleration and fixed-vs-tracking comparison, waterfall color and time scales, step-track holding still after track loss, polarization in the workflow, phone flow.
-- **All labs:** glossary or tap-to-define terms.
+Completed on 2026-11-22. Model changes are covered by automated tests, and each lab was exercised in a desktop browser and at emulated phone width. It has not been re-reviewed or checked on real hardware or phones.
+
+| Area | Done |
+|---|---|
+| Suite | Numbered learning path, next-lab links, cross-links, `?lesson=` deep links, glossary, tap-to-define terms, shared MODCOD table and state names, consistent reset wording |
+| Cross-lab physics | DVB-S2 now passes through the same TWTA curve as Interference, with compressed total output and a falling real carrier. Both labs share one relock time |
+| Mixer | 12500 MHz carried through the link, scene level gaps explained, two-tone compression, uncorrelated image addition, Saleh TWTA with IBO/OBO, LO drive affecting linearity, filter stopband limit, shaped noise, visible spectral inversion, restore prompt when settings no longer match a lesson |
+| Interference | Beacon readout, C/N breakdown, independent MODCOD for the other carrier, ALC benefit and finite range, IQ signal-type lessons, MODCOD throughput, usable time after relock, continuous sweep track |
+| DVB-S2 | MER in monitoring and history, ramp-down, history gaps instead of clipping, updates while paused, Reset restores defaults |
+| Peaker | Guided first task, simulation speed, fixed-dish comparison, waterfall color and time scales, step-track holds still after track loss, polarization noted as the next field step |
+| Phones | Jump bar in Mixer, Interference and DVB-S2, Auto-peak and Pause in the Peaker dock, wrapped scene tabs |
+
+Known simplifications: TWTA AM/PM is not modeled, the tube curve and C/IM are typical values, and receiver acquisition times and margins are illustrative.
 
 ### Pass 3: questions to answer
 
