@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Mixer Lab</title>
+<meta name="description" content="Explore mixers, spurs, intermodulation and satellite frequency conversion." />
+<link rel="icon" href="data:," />
+<style>
+  :root { --bg:#0d1319; --panel:#141c24; --line:#26333e; --text:#dbe5ea; --muted:#8fa3b0; --accent:#4fe0c0; --warn:#e8a33d; color-scheme:dark; }
+  * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.4 system-ui, "Segoe UI", sans-serif; }
+  header { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; padding:10px 16px; border-bottom:1px solid var(--line); }
+  h1 { font-size:18px; margin:0; }
+  header span { color:var(--muted); font-size:12px; }
+  .home { font-size:13px; text-decoration:none; }
+  a { color:var(--accent); }
+  nav { display:flex; gap:6px; padding:8px 16px; overflow-x:auto; border-bottom:1px solid var(--line); }
+  nav button { width:auto; flex:none; margin:0; }
+  main { display:grid; grid-template-columns:280px minmax(0,1fr) 370px; gap:10px; padding:10px; align-items:start; }
+  .col { display:flex; flex-direction:column; gap:10px; min-width:0; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:10px; }
+  h2 { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:0 0 8px; }
+  label { display:block; color:var(--muted); font-size:12px; margin-bottom:7px; }
+  input, select, button { width:100%; margin-top:2px; padding:6px 7px; background:#0d1319; color:var(--text); border:1px solid var(--line); border-radius:4px; font:inherit; }
+  input[type=checkbox] { width:auto; margin:0 6px 0 0; vertical-align:middle; }
+  input[type=range] { padding:0; accent-color:var(--accent); }
+  button { cursor:pointer; background:#1b2732; }
+  @media (hover:hover) { button:hover { border-color:var(--accent); } }
+  button.active { background:var(--accent); color:#06231d; border-color:var(--accent); font-weight:600; }
+  button:disabled { opacity:.4; cursor:default; }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  output { float:right; color:var(--text); font:12px ui-monospace, Consolas, monospace; }
+  #chain { display:flex; flex-wrap:wrap; align-items:stretch; gap:4px; }
+  #chain button { width:auto; flex:1 1 86px; margin:0; padding:5px 6px; text-align:left; font-size:12px; line-height:1.25; }
+  #chain button small { display:block; color:var(--muted); font:11px ui-monospace, Consolas, monospace; white-space:nowrap; }
+  #chain button.active small { color:#06231d; }
+  #chain button.off { border-style:dashed; opacity:.7; }
+  .plotHead { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; margin-bottom:6px; }
+  .plotHead h2 { margin:0; flex:1 1 auto; }
+  .plotHead label { display:flex; align-items:center; gap:5px; margin:0; }
+  .plotHead select { width:auto; margin:0; padding:3px 5px; }
+  canvas { display:block; width:100%; border-radius:3px; touch-action:pan-y; }
+  #spectrum { height:400px; }
+  #slope { height:280px; }
+  .legend { display:flex; flex-wrap:wrap; gap:3px 12px; margin-top:6px; font-size:11px; color:var(--muted); }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:-1px; }
+  dl { display:grid; grid-template-columns:1fr auto; gap:3px 10px; margin:0; font:12px ui-monospace, Consolas, monospace; }
+  dt { color:var(--muted); } dd { margin:0; text-align:right; font-variant-numeric:tabular-nums; }
+  #lessonTitle { font-size:15px; margin:0 0 4px; }
+  #lessonText { margin:0 0 8px; font-size:13px; min-height:112px; }
+  .lessonNav { display:flex; align-items:center; gap:6px; }
+  .lessonNav button { width:auto; margin:0; }
+  #lessonPos { flex:1; text-align:center; color:var(--muted); font-size:12px; }
+  .note { font-size:12px; color:var(--muted); margin:6px 0 0; }
+  .tableWrap { max-height:300px; overflow:auto; }
+  table { width:100%; border-collapse:collapse; font:12px ui-monospace, Consolas, monospace; }
+  th { position:sticky; top:0; background:var(--panel); color:var(--muted); font-weight:400; text-align:right; padding:3px 6px; border-bottom:1px solid var(--line); }
+  td { text-align:right; padding:3px 6px; border-bottom:1px solid #1c2730; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  th:first-child, td:first-child { text-align:left; }
+  td i { display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:5px; }
+  @media (max-width:1180px) {
+    main { grid-template-columns:minmax(0,1fr); padding:10px 16px; }
+    /* Keep the experiment, test points and spectrum together, ahead of the settings. */
+    .col { display:contents; }
+    .col > * { order:4; min-width:0; }
+    #lessonBox { order:1; } #chainBox { order:2; } #specBox { order:3; }
+    #spectrum { height:340px; }
+    input:not([type=checkbox]):not([type=range]), select { font-size:16px; }
+    button { min-height:40px; }
+    #chain button { flex:1 1 30%; }
+  }
+</style>
+</head>
+<body>
+<header><a href="/" class="home">SatLab</a><h1>Mixer Lab</h1><span>Mixers, spurs and intermodulation through a satellite link</span></header>
+<nav id="scenes" aria-label="Scenes"></nav>
+<main>
+  <div class="col">
+    <section>
+      <h2>Signal</h2>
+      <label><span id="rfName">RF</span> frequency (MHz)<input id="rfMHz" type="number" min="1" max="40000" step="1" /></label>
+      <label>Level per tone <output id="rfDbmOut"></output><input id="rfDbm" type="range" min="-130" max="20" step="0.5" /></label>
+      <label><input id="twoTone" type="checkbox" />Two tones</label>
+      <label id="spacingWrap">Tone spacing (MHz)<input id="spacingMHz" type="number" min="0.01" max="100" step="0.01" /></label>
+    </section>
+    <section id="loSection">
+      <h2>Mixer</h2>
+      <label>LO frequency (MHz)<input id="loMHz" type="number" min="1" max="40000" step="1" /></label>
+      <label>LO drive <output id="loDbmOut"></output><input id="loDbm" type="range" min="-10" max="17" step="0.5" /></label>
+      <label>Mixer type<select id="mixerType"><option value="single">Single-ended</option><option value="balanced">Single-balanced</option><option value="double">Double-balanced</option></select></label>
+    </section>
+    <section>
+      <h2>Options</h2>
+      <label><input id="filtersOn" type="checkbox" />Filters in circuit</label>
+      <div id="imageWrap">
+        <label><input id="imageOn" type="checkbox" />Signal at the image frequency</label>
+        <label id="imageLevelWrap">Image level <output id="imageDbmOut"></output><input id="imageDbm" type="range" min="-130" max="20" step="0.5" /></label>
+      </div>
+      <button id="reset">Reset scene</button>
+    </section>
+    <p class="note">Stage values are typical for each role, not a specific product’s datasheet. Noise is calculated from the cascade.</p>
+  </div>
+
+  <div class="col">
+    <section id="chainBox">
+      <h2>Signal chain: choose a test point</h2>
+      <div id="chain" role="group" aria-label="Test points"></div>
+    </section>
+    <section id="specBox">
+      <div class="plotHead">
+        <h2 id="specTitle">Spectrum</h2>
+        <label>View <select id="span"><option value="all">All products</option><option value="near">Around carrier</option></select></label>
+        <label>RBW <select id="rbw"><option value="10000">10 kHz</option><option value="100000" selected>100 kHz</option><option value="1000000">1 MHz</option></select></label>
+      </div>
+      <canvas id="spectrum" role="img" aria-label="Spectrum of the signal at the chosen test point, with each mixing product labeled"></canvas>
+      <div class="legend" id="legend"></div>
+    </section>
+    <section>
+      <h2>Products at this point</h2>
+      <div class="tableWrap" tabindex="0" role="region" aria-label="Products at this test point">
+        <table><thead><tr><th>Product</th><th>MHz</th><th>dBm</th><th>dBc</th></tr></thead><tbody id="table"></tbody></table>
+      </div>
+    </section>
+  </div>
+
+  <div class="col lessons">
+    <section id="lessonBox">
+      <h2 id="lessonHead">Guided experiment</h2>
+      <h3 id="lessonTitle"></h3>
+      <p id="lessonText" aria-live="polite"></p>
+      <div class="lessonNav">
+        <button id="lessonBack">Back</button>
+        <span id="lessonPos"></span>
+        <button id="lessonNext">Next</button>
+      </div>
+    </section>
+    <section>
+      <h2>Measured at this point</h2>
+      <dl>
+        <dt>Wanted carrier</dt><dd id="mCarrier">–</dd>
+        <dt>Gain from input</dt><dd id="mGain">–</dd>
+        <dt>Noise figure</dt><dd id="mNf">–</dd>
+        <dt>Worst unwanted</dt><dd id="mWorst">–</dd>
+        <dt>Third-order IM</dt><dd id="mIm3">–</dd>
+        <dt>Input IP3</dt><dd id="mIip3">–</dd>
+        <dt>Output IP3</dt><dd id="mOip3">–</dd>
+        <dt>Input P1dB</dt><dd id="mP1">–</dd>
+      </dl>
+    </section>
+    <section>
+      <h2>Output against input</h2>
+      <canvas id="slope" role="img" aria-label="Output level of the carrier and third-order products against input level, with P1dB and IP3 marked"></canvas>
+      <div class="legend"><span><i style="background:#0f9c7e"></i>Carrier</span><span><i style="background:#5f7df0"></i>Third-order</span><span>Dashed: ideal slopes</span><span>White line: your level</span></div>
+    </section>
+  </div>
+</main>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

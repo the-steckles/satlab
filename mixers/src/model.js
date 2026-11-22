@@ -41,7 +41,7 @@ export const SCENES = {
   satTx: {
     name: 'Satellite downlink', short: 'Sat downlink', sign: 0, noLo: true,
     intro: 'A channel amplifier drives the TWTA. Backing off from saturation trades power for linearity.',
-    defaults: { rfMHz: 12500, loMHz: 0, rfDbm: -45, loDbm: 7, spacingMHz: 1, twoTone: true, imageOn: false, imageDbm: -45, mixerType: 'double', filtersOn: true },
+    defaults: { rfMHz: 12500, loMHz: 0, rfDbm: -52, loDbm: 7, spacingMHz: 1, twoTone: true, imageOn: false, imageDbm: -45, mixerType: 'double', filtersOn: true },
     inputName: 'Channel in',
     stages: [
       { id: 'cha', type: 'amp', name: 'Channel amp', gainDb: 40, oip3Dbm: 25, nfDb: 8 },
