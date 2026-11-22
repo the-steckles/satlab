@@ -82,6 +82,17 @@ test('high-side LO swaps the order of the two tones at the output', () => {
   assert.ok(f1.hz > f2.hz);
 });
 
+test('edge settings stay finite or report no carrier', () => {
+  const zeroIf = runScene('bench', { rfMHz: 1700, loMHz: 1700 });
+  assert.equal(summarize(last(zeroIf)).carrier, null);
+  assert.ok(sweep('bench', { rfMHz: 1700, loMHz: 1700 }, 1, 5).points.every((p) => !Number.isFinite(p.single)));
+  const input = sweep('bench', {}, 0, 5);
+  assert.equal(input.oip3, null);
+  assert.equal(input.p1dB, null);
+  near(input.gain, 0, 1e-9);
+  assert.ok(runScene('groundDown', { imageOn: true, twoTone: true }).nodes.length === 6);
+});
+
 test('LNA gain sets the cascade noise figure in the LNB', () => {
   const node = last(runScene('groundDown', {}));
   assert.ok(node.nfDb < 1.1 && node.nfDb > 0.7, `NF ${node.nfDb}`);

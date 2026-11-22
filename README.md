@@ -4,6 +4,7 @@ Interactive browser simulators for learning satellite communications.
 
 - [Peaker](peaker/README.md): point and peak a ground antenna on a real satellite.
 - Mixer Lab (`mixers/`): mixing products, spurs, compression and intermodulation through a satellite link.
+- Interference Lab (`interference/`): how interference affects a fictional satellite link, and how operators diagnose and respond to it.
 
 Plans and ideas for future tools are in [docs/ROADMAP.md](docs/ROADMAP.md).
 

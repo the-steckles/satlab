@@ -33,7 +33,7 @@ export function drawSpectrum(canvas, { list, loHz, hiHz, topDbm, bottomDbm, floo
     ctx.moveTo(M.l, y); ctx.lineTo(M.l + pw, y);
     ctx.fillText(`${db}`, M.l - 6, y + 4);
   }
-  const fx = ticks(loHz, hiHz, Math.max(2, Math.floor(pw / 90)));
+  const fx = ticks(loHz, hiHz, Math.max(3, Math.floor(pw / 90)));
   ctx.textAlign = 'center';
   for (const hz of fx.values) {
     const x = Math.round(X(hz)) + 0.5;
@@ -119,10 +119,10 @@ export function drawSpectrum(canvas, { list, loHz, hiHz, topDbm, bottomDbm, floo
 
 export function drawSlope(canvas, data, operatingPin) {
   const { ctx, w, h } = prepare(canvas);
-  if (!data) {
+  if (!data || !data.points.every((p) => Number.isFinite(p.single))) {
     ctx.fillStyle = C.axis;
     ctx.textAlign = 'center';
-    ctx.fillText('measuring…', w / 2, h / 2);
+    ctx.fillText(data ? 'no wanted carrier at this point' : 'measuring…', w / 2, h / 2);
     return;
   }
   const m = { l: 48, r: 10, t: 10, b: 34 };

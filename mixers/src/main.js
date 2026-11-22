@@ -114,7 +114,7 @@ function scheduleSlope() {
   drawSlope($('slope'), null);
   clearTimeout(S.slopeTimer);
   S.slopeTimer = setTimeout(() => {
-    S.slope = S.result.nodes[S.nodeIndex].pastMixer || SCENES[S.sceneId].noLo || S.nodeIndex > 0 ? sweep(S.sceneId, S.params, S.nodeIndex, 21) : null;
+    S.slope = sweep(S.sceneId, S.params, S.nodeIndex, 21);
     render();
   }, 180);
 }

@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Interference Lab</title>
+<meta name="description" content="Learn how interference affects a satellite link, and how operators recognize and respond to it." />
+<link rel="icon" href="data:," />
+<style>
+  :root { --bg:#0d1319; --panel:#141c24; --line:#26333e; --text:#dbe5ea; --muted:#8fa3b0; --accent:#4fe0c0; --warn:#e8a33d; --bad:#ff7a6b; color-scheme:dark; }
+  * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.4 system-ui, "Segoe UI", sans-serif; }
+  header { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; padding:10px 16px; border-bottom:1px solid var(--line); }
+  h1 { font-size:18px; margin:0; }
+  header span { color:var(--muted); font-size:12px; }
+  .home { font-size:13px; text-decoration:none; }
+  a { color:var(--accent); }
+  nav { display:flex; gap:6px; padding:8px 16px; overflow-x:auto; border-bottom:1px solid var(--line); }
+  nav button { width:auto; flex:none; margin:0; }
+  main { display:grid; grid-template-columns:280px minmax(0,1fr) 370px; gap:10px; padding:10px; align-items:start; }
+  .col { display:flex; flex-direction:column; gap:10px; min-width:0; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:10px; }
+  h2 { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:0 0 8px; }
+  label { display:block; color:var(--muted); font-size:12px; margin-bottom:7px; }
+  input, select, button { width:100%; margin-top:2px; padding:6px 7px; background:#0d1319; color:var(--text); border:1px solid var(--line); border-radius:4px; font:inherit; }
+  input[type=checkbox] { width:auto; margin:0 6px 0 0; vertical-align:middle; }
+  input[type=range] { padding:0; accent-color:var(--accent); }
+  button { cursor:pointer; background:#1b2732; }
+  @media (hover:hover) { button:hover { border-color:var(--accent); } }
+  button.active { background:var(--accent); color:#06231d; border-color:var(--accent); font-weight:600; }
+  button:disabled { opacity:.4; cursor:default; }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  output { float:right; color:var(--text); font:12px ui-monospace, Consolas, monospace; }
+  #views { display:flex; flex-wrap:wrap; gap:4px; }
+  #views button { width:auto; flex:1 1 120px; margin:0; }
+  .plotHead { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; margin-bottom:6px; }
+  .plotHead h2 { margin:0; flex:1 1 auto; }
+  .plotHead button { width:auto; margin:0; padding:3px 10px; }
+  canvas { display:block; width:100%; border-radius:3px; touch-action:pan-y; }
+  #spectrum { height:330px; }
+  #waterfall { height:190px; width:calc(100% - 68px); margin-left:56px; image-rendering:pixelated; }
+  .waterLabel { color:var(--muted); font-size:11px; margin:6px 0 3px 56px; }
+  table { width:100%; border-collapse:collapse; font:12px ui-monospace, Consolas, monospace; }
+  th { color:var(--muted); font-weight:400; text-align:right; padding:3px 4px; border-bottom:1px solid var(--line); }
+  td { text-align:right; padding:3px 4px; border-bottom:1px solid #1c2730; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  th:first-child, td:first-child { text-align:left; color:var(--muted); }
+  .Locked { color:var(--accent); } .Marginal { color:var(--warn); } .Lost { color:var(--bad); font-weight:600; }
+  #lessonTitle { font-size:15px; margin:0 0 4px; }
+  #lessonText { margin:0 0 8px; font-size:13px; min-height:130px; }
+  .lessonNav { display:flex; align-items:center; gap:6px; }
+  .lessonNav button { width:auto; margin:0; }
+  #lessonPos { flex:1; text-align:center; color:var(--muted); font-size:12px; }
+  #answers { display:grid; gap:5px; margin-bottom:8px; }
+  #answers button { margin:0; text-align:left; }
+  #answers button.right { background:#123c33; border-color:var(--accent); opacity:1; }
+  #answers button.right::after { content:" ✓ cause"; color:var(--accent); }
+  #answers button.wrong { background:#3a1f1d; border-color:var(--bad); opacity:1; }
+  #answers button.wrong::after { content:" ✕ your answer"; color:var(--bad); }
+  .note { font-size:12px; color:var(--muted); margin:6px 0 0; }
+  @media (max-width:1180px) {
+    main { grid-template-columns:minmax(0,1fr); padding:10px 16px; }
+    .col { display:contents; }
+    .col > * { order:4; min-width:0; }
+    #lessonBox { order:1; } #siteBox { order:2; } #specBox { order:3; }
+    #spectrum { height:300px; }
+    input:not([type=checkbox]):not([type=range]), select { font-size:16px; }
+    button { min-height:40px; }
+    #views button { flex:1 1 40%; }
+  }
+</style>
+</head>
+<body>
+<header><a href="/" class="home">SatLab</a><h1>Interference Lab</h1><span>How interference affects a satellite link, and how operators respond</span></header>
+<nav aria-label="Mode">
+  <button id="modeLearn">Guided experiments</button>
+  <button id="modeDiagnose">Diagnose it</button>
+</nav>
+<main>
+  <div class="col">
+    <section>
+      <h2>Your carrier</h2>
+      <label>Position in transponder <output id="carrierMHzOut"></output><input id="carrierMHz" type="range" min="-15" max="15" step="0.5" /></label>
+      <label>MODCOD<select id="modcod"></select></label>
+      <label>Transponder input backoff <output id="iboDbOut"></output><input id="iboDb" type="range" min="-12" max="15" step="0.5" /></label>
+    </section>
+    <section id="interfererBox">
+      <h2>Simulated interference</h2>
+      <label><input id="iOn" type="checkbox" />Enabled</label>
+      <label>Type<select id="iKind"><option value="cw">CW (narrowband)</option><option value="swept">Swept</option><option value="partial">Partial-band</option><option value="barrage">Wideband</option></select></label>
+      <label>Enters on<select id="iPath"><option value="uplink">Uplink (all sites)</option><option value="downlink">Downlink (Site A only)</option></select></label>
+      <label>Level relative to carrier <output id="icDbOut"></output><input id="icDb" type="range" min="-30" max="20" step="0.5" /></label>
+      <label id="offsetWrap">Position <output id="offsetMHzOut"></output><input id="offsetMHz" type="range" min="-18" max="18" step="0.5" /></label>
+      <label id="bwWrap">Width <output id="bwMHzOut"></output><input id="bwMHz" type="range" min="1" max="36" step="0.5" /></label>
+    </section>
+    <section id="conditionsBox">
+      <h2>Site A conditions</h2>
+      <label>Rain fade <output id="rainDbOut"></output><input id="rainDb" type="range" min="0" max="20" step="0.5" /></label>
+      <label>Antenna mispointing loss <output id="mispointDbOut"></output><input id="mispointDb" type="range" min="0" max="20" step="0.5" /></label>
+    </section>
+    <p class="note">SatLab-1 is fictional, and levels are relative to the carrier. Interfering with satellite communications is illegal. This simulator is for learning to recognize and resolve it.</p>
+  </div>
+
+  <div class="col">
+    <section id="specBox">
+      <div class="plotHead">
+        <h2 id="specTitle">Spectrum</h2>
+        <button id="pause">Pause</button>
+      </div>
+      <div id="views" role="group" aria-label="Test point" style="margin-bottom:8px"></div>
+      <canvas id="spectrum" role="img" aria-label="Spectrum of the transponder at the chosen test point"></canvas>
+      <div class="waterLabel">Waterfall, newest at top</div>
+      <canvas id="waterfall" role="img" aria-label="Waterfall of the transponder over time"></canvas>
+    </section>
+  </div>
+
+  <div class="col">
+    <section id="lessonBox">
+      <h2 id="lessonHead">Guided experiment</h2>
+      <h3 id="lessonTitle"></h3>
+      <p id="lessonText" aria-live="polite"></p>
+      <div id="answers" role="group" aria-label="Possible causes" hidden></div>
+      <div class="lessonNav">
+        <button id="lessonBack">Back</button>
+        <span id="lessonPos"></span>
+        <button id="lessonNext">Next</button>
+      </div>
+    </section>
+    <section id="siteBox">
+      <h2>Site comparison</h2>
+      <table>
+        <thead><tr><th></th><th>Site A</th><th>Site B</th></tr></thead>
+        <tbody id="sites"></tbody>
+      </table>
+      <p class="note" id="tpNote"></p>
+    </section>
+  </div>
+</main>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
