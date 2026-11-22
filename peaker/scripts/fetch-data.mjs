@@ -8,7 +8,7 @@ import { matchSatellite, nameKeys, parseBeaconTable, parseTransponders, validate
 const FPS = 'http://frequencyplansatellites.altervista.org/';
 const REGIONS = ['Asia', 'Europe-Africa-MiddleEast', 'Atlantic', 'Americas'];
 const OMM_FIELDS = ['OBJECT_NAME', 'OBJECT_ID', 'EPOCH', 'MEAN_MOTION', 'ECCENTRICITY', 'INCLINATION', 'RA_OF_ASC_NODE', 'ARG_OF_PERICENTER', 'MEAN_ANOMALY', 'EPHEMERIS_TYPE', 'CLASSIFICATION_TYPE', 'NORAD_CAT_ID', 'ELEMENT_SET_NO', 'REV_AT_EPOCH', 'BSTAR', 'MEAN_MOTION_DOT', 'MEAN_MOTION_DDOT'];
-const root = new URL('../', import.meta.url);
+const root = new URL('../../', import.meta.url);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function cached(url) {

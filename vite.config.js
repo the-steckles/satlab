@@ -1,6 +1,7 @@
 const EMPTY = '\0satellite-wasm-stub';
 
 export default {
+  build: { rollupOptions: { input: ['index.html', 'peaker/index.html'] } },
   optimizeDeps: { exclude: ['satellite.js'] },
   plugins: [{
     // satellite.js re-exports a Node-flavored WASM build that this app never calls.
