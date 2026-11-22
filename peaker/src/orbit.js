@@ -4,6 +4,10 @@ const toDeg = (r) => (r * 180) / Math.PI;
 export const makeSatrec = (omm) => json2satrec(omm);
 export const isGeostationary = (omm) => Math.abs(omm.MEAN_MOTION - 1.0027) < 0.05 && omm.ECCENTRICITY < 0.05;
 
+// Above this, a fixed narrow beam loses the satellite over a day.
+export const isInclinedGeo = (omm) => isGeostationary(omm) && omm.INCLINATION >= 0.5;
+export const orbitName = (omm) => (isInclinedGeo(omm) ? `Inclined GEO (${omm.INCLINATION.toFixed(2)}°)` : isGeostationary(omm) ? 'Geostationary' : omm.MEAN_MOTION > 11 ? 'LEO' : omm.MEAN_MOTION > 1.5 ? 'MEO / HEO' : 'High orbit');
+
 const observer = ({ lat, lon, altM }) => ({
   latitude: degreesToRadians(lat),
   longitude: degreesToRadians(lon),

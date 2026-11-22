@@ -31,7 +31,7 @@ export function drawTrace(canvas, { db, lowMHz, highMHz, centerMHz, topDb, botto
   }
   ctx.stroke();
   ctx.fillText('Frequency (MHz)', M.l + pw / 2, h - 6);
-  verticalLabel(ctx, 'dB relative to clear-sky carrier', 13, M.t + ph / 2);
+  verticalLabel(ctx, 'Density in 100 kHz RBW (dB, 0 = carrier)', 13, M.t + ph / 2);
 
   ctx.save();
   ctx.beginPath();

@@ -46,6 +46,13 @@
   td { text-align:right; padding:3px 4px; border-bottom:1px solid #1c2730; font-variant-numeric:tabular-nums; white-space:nowrap; }
   th:first-child, td:first-child { text-align:left; color:var(--muted); }
   .Locked { color:var(--accent); } .Marginal { color:var(--warn); } .Lost { color:var(--bad); font-weight:600; }
+  #iq { height:280px; }
+  .plotHead label { display:flex; align-items:center; gap:5px; margin:0; }
+  .plotHead select { width:auto; margin:0; padding:3px 5px; }
+  #powerBar { display:flex; gap:2px; height:22px; border-radius:3px; overflow:hidden; background:#0a0f14; }
+  #powerBar i { display:block; min-width:0; }
+  .legend { display:flex; flex-wrap:wrap; gap:3px 12px; margin-top:6px; font-size:11px; color:var(--muted); }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:-1px; }
   #lessonTitle { font-size:15px; margin:0 0 4px; }
   #lessonText { margin:0 0 8px; font-size:13px; min-height:130px; }
   .lessonNav { display:flex; align-items:center; gap:6px; }
@@ -62,7 +69,7 @@
     main { grid-template-columns:minmax(0,1fr); padding:10px 16px; }
     .col { display:contents; }
     .col > * { order:4; min-width:0; }
-    #lessonBox { order:1; } #siteBox { order:2; } #specBox { order:3; }
+    #lessonBox { order:1; } #siteBox { order:2; } #specBox { order:3; } #iqBox { order:3; } #powerBox { order:3; }
     #spectrum { height:300px; }
     input:not([type=checkbox]):not([type=range]), select { font-size:16px; }
     button { min-height:40px; }
@@ -75,6 +82,7 @@
 <nav aria-label="Mode">
   <button id="modeLearn">Guided experiments</button>
   <button id="modeDiagnose">Diagnose it</button>
+  <button id="modeSandbox">Sandbox</button>
 </nav>
 <main>
   <div class="col">
@@ -84,14 +92,36 @@
       <label>MODCOD<select id="modcod"></select></label>
       <label>Transponder input backoff <output id="iboDbOut"></output><input id="iboDb" type="range" min="-12" max="15" step="0.5" /></label>
     </section>
+    <section id="txBox">
+      <h2>Transmit site</h2>
+      <label>Symbol rate <output id="rsMHzOut"></output><input id="rsMHz" type="range" min="1" max="30" step="0.5" /></label>
+      <label>Carrier power <output id="trimDbOut"></output><input id="trimDb" type="range" min="-10" max="10" step="0.5" /></label>
+      <label><input id="neighborOn" type="checkbox" />Second carrier</label>
+      <div id="neighborWrap">
+        <label>Position <output id="neighborMHzOut"></output><input id="neighborMHz" type="range" min="-15" max="15" step="0.5" /></label>
+        <label>Symbol rate <output id="neighborRsMHzOut"></output><input id="neighborRsMHz" type="range" min="1" max="30" step="0.5" /></label>
+        <label>Power <output id="neighborTrimDbOut"></output><input id="neighborTrimDb" type="range" min="-10" max="10" step="0.5" /></label>
+      </div>
+      <label><input id="alc" type="checkbox" />Transponder ALC</label>
+      <button id="sandboxReset">Reset sandbox</button>
+    </section>
     <section id="interfererBox">
       <h2>Simulated interference</h2>
       <label><input id="iOn" type="checkbox" />Enabled</label>
-      <label>Type<select id="iKind"><option value="cw">CW (narrowband)</option><option value="swept">Swept</option><option value="partial">Partial-band</option><option value="barrage">Wideband</option></select></label>
+      <label>Type<select id="iKind"><option value="cw">CW (single tone)</option><option value="narrow">Narrowband (modulated)</option><option value="swept">Swept</option><option value="partial">Partial-band</option><option value="barrage">Wideband</option></select></label>
       <label>Enters on<select id="iPath"><option value="uplink">Uplink (all sites)</option><option value="downlink">Downlink (Site A only)</option></select></label>
       <label>Level relative to carrier <output id="icDbOut"></output><input id="icDb" type="range" min="-30" max="20" step="0.5" /></label>
-      <label id="offsetWrap">Position <output id="offsetMHzOut"></output><input id="offsetMHz" type="range" min="-18" max="18" step="0.5" /></label>
-      <label id="bwWrap">Width <output id="bwMHzOut"></output><input id="bwMHz" type="range" min="1" max="36" step="0.5" /></label>
+      <label id="offsetWrap"><span id="offsetName">Position</span> <output id="offsetMHzOut"></output><input id="offsetMHz" type="range" min="-18" max="18" step="0.5" /></label>
+      <p class="note" id="cwNote">An unmodulated tone has no bandwidth. The analyzer draws it as a line one resolution bin wide.</p>
+      <label id="narrowWrap">Occupied width <output id="narrowMHzOut"></output><input id="narrowMHz" type="range" min="0.1" max="3" step="0.1" /></label>
+      <label id="bwWrap">Occupied width <output id="bwMHzOut"></output><input id="bwMHz" type="range" min="1" max="36" step="0.5" /></label>
+      <label id="wideWrap">Occupied width <output id="wideMHzOut"></output><input id="wideMHz" type="range" min="10" max="60" step="1" /></label>
+      <div id="sweepWrap">
+        <label>Sweep span <output id="spanMHzOut"></output><input id="spanMHz" type="range" min="1" max="36" step="0.5" /></label>
+        <label>Instantaneous width <output id="sweepWidthMHzOut"></output><input id="sweepWidthMHz" type="range" min="0" max="6" step="0.1" /></label>
+        <label>Sweep period <output id="sweepSOut"></output><input id="sweepS" type="range" min="0.5" max="30" step="0.5" /></label>
+        <label>Sweep shape<select id="sweepShape"><option value="triangle">Triangle (up and back)</option><option value="saw">Sawtooth (up, then reset)</option></select></label>
+      </div>
     </section>
     <section id="conditionsBox">
       <h2>Site A conditions</h2>
@@ -126,6 +156,11 @@
         <button id="lessonNext">Next</button>
       </div>
     </section>
+    <section id="iqBox">
+      <div class="plotHead"><h2>IQ constellation</h2><label>Site <select id="iqSite"><option value="A">A</option><option value="B">B</option></select></label></div>
+      <canvas id="iq" role="img" aria-label="Received IQ constellation for your carrier"></canvas>
+      <p class="note" id="iqNote"></p>
+    </section>
     <section id="siteBox">
       <h2>Site comparison</h2>
       <table>
@@ -133,6 +168,12 @@
         <tbody id="sites"></tbody>
       </table>
       <p class="note" id="tpNote"></p>
+    </section>
+    <section id="powerBox">
+      <h2>Where the transponder’s power goes</h2>
+      <div id="powerBar" role="img"></div>
+      <div class="legend" id="powerLegend"></div>
+      <p class="note" id="powerNote"></p>
     </section>
   </div>
 </main>

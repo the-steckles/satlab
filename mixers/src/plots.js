@@ -209,3 +209,97 @@ export function drawSlope(canvas, data, operatingPin) {
   }
   ctx.restore();
 }
+
+// Filter loss against frequency, with each product arriving at the filter placed on the curve.
+export function drawFilter(canvas, { settings, lossAt, list }) {
+  const { ctx, w, h } = prepare(canvas);
+  const m = { l: 48, r: 12, t: 10, b: 38 }, pw = w - m.l - m.r, ph = h - m.t - m.b, maxLoss = 80;
+  const half = settings.bwMHz * 2.5, lo = Math.max(0.001, settings.centerMHz - half), hi = settings.centerMHz + half;
+  const X = (mhz) => m.l + ((mhz - lo) / (hi - lo)) * pw, Y = (db) => m.t + (Math.min(maxLoss, db) / maxLoss) * ph;
+  ctx.strokeStyle = C.grid;
+  ctx.fillStyle = C.axis;
+  ctx.textAlign = 'right';
+  ctx.beginPath();
+  for (const db of [0, 20, 40, 60, 80]) {
+    const y = Math.round(Y(db)) + 0.5;
+    ctx.moveTo(m.l, y); ctx.lineTo(m.l + pw, y);
+    ctx.fillText(db ? `−${db}` : '0', m.l - 5, y + 4);
+  }
+  const fx = ticks(lo * 1e6, hi * 1e6, Math.max(3, Math.floor(pw / 90)));
+  ctx.textAlign = 'center';
+  for (const hz of fx.values) {
+    const x = Math.round(X(hz / 1e6)) + 0.5;
+    ctx.moveTo(x, m.t); ctx.lineTo(x, m.t + ph);
+    ctx.fillText(mhzText(hz, fx.step), Math.max(m.l + 20, Math.min(m.l + pw - 20, x)), h - 22);
+  }
+  ctx.stroke();
+  ctx.fillText('Frequency (MHz)', m.l + pw / 2, h - 5);
+  verticalLabel(ctx, 'Response (dB)', 11, m.t + ph / 2);
+  ctx.save();
+  ctx.beginPath(); ctx.rect(m.l, m.t, pw, ph); ctx.clip();
+  ctx.strokeStyle = settings.on ? '#dbe5ea' : '#6b7c88';
+  ctx.lineWidth = 2;
+  if (!settings.on) ctx.setLineDash([5, 4]);
+  ctx.beginPath();
+  for (let px = 0; px <= pw; px++) {
+    const y = Y(lossAt(lo + (px / pw) * (hi - lo)));
+    if (px) ctx.lineTo(m.l + px, y); else ctx.moveTo(m.l, y);
+  }
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.lineWidth = 2;
+  for (const p of list) {
+    const mhz = p.hz / 1e6;
+    if (mhz < lo || mhz > hi) continue;
+    ctx.fillStyle = KINDS[p.kind].color;
+    ctx.strokeStyle = C.bg;
+    ctx.beginPath(); ctx.arc(X(mhz), Y(lossAt(mhz)), 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  }
+  ctx.restore();
+  ctx.lineWidth = 1;
+}
+
+// A number line showing why the input and its image land on the same output.
+export function drawPlan(canvas, { rf, lo, out, image, product, mode }) {
+  const { ctx, w, h } = prepare(canvas);
+  const items = [
+    { name: 'Output', mhz: out, color: KINDS.wanted.color },
+    { name: 'F1', mhz: rf, color: C.text },
+    { name: 'LO', mhz: lo, color: KINDS.lo.color },
+    { name: mode === 'upconvert' ? 'Other sideband' : 'Image', mhz: image, color: KINDS.image.color },
+  ];
+  const top = Math.max(...items.map((x) => x.mhz)) * 1.08, m = 16, base = h - 34;
+  const X = (mhz) => m + (mhz / top) * (w - 2 * m);
+  ctx.strokeStyle = C.axis;
+  ctx.beginPath(); ctx.moveTo(m, base + 0.5); ctx.lineTo(w - m, base + 0.5); ctx.stroke();
+
+  // The mixer only sees distance from the LO, so draw the equal distances.
+  ctx.textAlign = 'center';
+  const span = (a, b, y, label = `${+out.toFixed(3)} MHz`) => {
+    ctx.strokeStyle = KINDS.image.color;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.moveTo(X(a), y); ctx.lineTo(X(b), y); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = C.text;
+    ctx.fillText(label, (X(a) + X(b)) / 2, y - 4);
+  };
+  if (mode === 'upconvert') { /* No image input to compare: the diagram just places the two sidebands. */ }
+  else if (mode === 'aboveTwoLo') { span(lo, rf, 24); span(image, out, 44, `+ LO ${+lo.toFixed(3)} MHz`); }
+  else if (product === 'sum') span(lo, image, 24);
+  else { span(Math.min(lo, rf), Math.max(lo, rf), 24); span(Math.min(lo, image), Math.max(lo, image), 44); }
+
+  ctx.lineWidth = 2;
+  const placed = [];
+  for (const item of [...items].sort((a, b) => a.mhz - b.mhz)) {
+    const x = X(item.mhz);
+    ctx.strokeStyle = item.color;
+    ctx.beginPath(); ctx.moveTo(x, base - 22); ctx.lineTo(x, base); ctx.stroke();
+    const text = `${item.name} ${+item.mhz.toFixed(1)}`, width = ctx.measureText(text).width + 8;
+    const cx = Math.max(m + width / 2, Math.min(w - m - width / 2, x));
+    const row = placed.some((p) => p.row === 0 && Math.abs(p.x - cx) < (p.width + width) / 2) ? 1 : 0;
+    placed.push({ x: cx, width, row });
+    ctx.fillStyle = C.text;
+    ctx.fillText(text, cx, base + 14 + row * 14);
+  }
+  ctx.lineWidth = 1;
+}

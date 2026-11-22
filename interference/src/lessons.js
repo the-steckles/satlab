@@ -12,7 +12,7 @@ export const LESSONS = [
   },
   {
     title: 'Interference adds to noise', set: I({ kind: 'cw', icDb: -15, offsetMHz: -8 }), view: 'A',
-    text: ({ r }) => `A CW signal 15 dB below your carrier lands in its band. C/I is ${plain(r.sites.A.iDb)} dB, and it combines with the noise as C/(N+I), so Es/N0 drops to ${plain(r.sites.A.esn0)} dB. Margin is now ${plain(r.sites.A.margin)} dB, even though the interferer is much weaker than the carrier.`,
+    text: ({ r }) => `A CW signal 15 dB below your carrier lands in its band. C/I is ${plain(r.sites.A.iDb)} dB, and it combines with the noise as C/(N+I), so Es/N0 drops to ${plain(r.sites.A.esn0)} dB. Margin is now ${plain(r.sites.A.margin)} dB. The tone looks taller than it should because the plot shows power density: the tone puts all its power in one 100 kHz bin, while your carrier spreads across 5 MHz. Height compares density, so compare total power with C/I.`,
   },
   {
     title: 'The cliff', set: I({ kind: 'cw', icDb: -7, offsetMHz: -8 }), view: 'A',
@@ -23,11 +23,11 @@ export const LESSONS = [
     text: ({ r }) => `The same signal moved onto the other carrier. Yours is ${r.sites.A.state} with ${plain(r.sites.A.margin)} dB margin, and the other carrier is ${r.sites.A.neighborState} with ${plain(r.sites.A.neighborMargin)} dB. When one carrier in a transponder fails and its neighbor is fine, suspect something narrowband on that frequency.`,
   },
   {
-    title: 'Spreading the same power', set: I({ kind: 'barrage', icDb: -7 }), view: 'A',
+    title: 'Spreading the same power', set: I({ kind: 'barrage', icDb: -7, offsetMHz: 0 }), view: 'A',
     text: ({ r }) => `Now the same total power covers the whole transponder, so only part of it falls on your carrier. C/I improves to ${plain(r.sites.A.iDb)} dB and margin is ${plain(r.sites.A.margin)} dB. On the analyzer this looks like a raised noise floor across the transponder rather than a distinct signal.`,
   },
   {
-    title: 'Swept interference', set: I({ kind: 'swept', icDb: 0, offsetMHz: 0, bwMHz: 32, sweepS: 8 }), view: 'A',
+    title: 'Swept interference', set: I({ kind: 'swept', icDb: 0, offsetMHz: 0, spanMHz: 32, sweepS: 8 }), view: 'A',
     text: ({ r }) => `This signal repeatedly sweeps across the transponder. It only hurts while crossing a carrier, so the link is usable about ${Math.round(lockShare(r.params) * 100)}% of the time. Watch the diagonal track on the waterfall. Intermittent errors with a repeating period are a strong clue that a time-based view will catch and a single sweep could miss.`,
   },
   {
@@ -35,8 +35,16 @@ export const LESSONS = [
     text: ({ r }) => `This interference enters at Site A’s antenna, so Site A is ${r.sites.A.state} while Site B stays ${r.sites.B.state}. An uplink interferer would appear at both. Comparing two sites is one of the fastest ways to localize a problem. View Site B and the transponder output to confirm the signal is not on the satellite.`,
   },
   {
+    title: 'Why a transponder shares power', set: {}, view: 'output',
+    text: ({ r }) => `A transponder has one output amplifier for everything in its band. The tube can only turn so much DC power into RF, so all signals draw from one fixed budget. The bar below shows the split: your carrier has ${Math.round(r.shares.carrier * 100)}%, the other carrier ${Math.round(r.shares.neighbor * 100)}%, and uplink noise ${Math.round(r.shares.noise * 100)}%. The amplifier cannot tell signal from noise, so noise uses power too.`,
+  },
+  {
     title: 'Power robbing', set: I({ kind: 'cw', icDb: 10, offsetMHz: 0 }), view: 'output',
-    text: ({ r }) => `A strong uplink signal sits between the carriers and overlaps neither. The transponder’s output is shared, so it takes ${r.interfererShareDb === null ? '–' : `${Math.round(10 ** (r.interfererShareDb / 10) * 100)}%`} of the input power and pushes both carriers down ${plain(r.robbedDb)} dB. Your margin is ${plain(r.sites.A.margin)} dB. Falling carrier levels at every site, with an unknown signal in the transponder, are the signature.`,
+    text: ({ r }) => `A strong uplink signal sits between the carriers and overlaps neither, yet takes ${Math.round(r.shares.interference * 100)}% of the input. Near saturation the output can barely grow, so the tube’s fixed output is divided among more input. A strong tone is especially harsh, because a limiter suppresses weaker signals beyond their proportional share. Both carriers fall ${plain(r.robbedDb)} dB. Their uplink noise falls with them, but the downlink noise at the ground does not, and intermodulation rises, so margin is ${plain(r.sites.A.margin)} dB.`,
+  },
+  {
+    title: 'Physics or protection?', set: { ...I({ kind: 'cw', icDb: 10, offsetMHz: 0 }), alc: true }, view: 'output',
+    text: ({ r }) => `In fixed-gain mode, power robbing is pure physics: no circuit decides to reduce anything, the tube simply runs out of power. Some transponders also have automatic level control (ALC), turned on here. ALC is a real protection feature. It measures the input and adds attenuation to keep the tube’s drive constant. The output total stays put, and the carriers still drop ${plain(r.robbedDb)} dB because the attenuator turns everything down together. Either way, a strong signal takes power from its neighbors.`,
   },
   {
     title: 'Rain is not interference', set: { rainDb: 6 }, view: 'A',

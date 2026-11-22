@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>DVB-S2 Overlay Lab</title>
+<meta name="description" content="See how a DVB-S2 receiver degrades, loses lock and captures a stronger signal, and how operators detect and defend against it." />
+<link rel="icon" href="data:," />
+<style>
+  :root { --bg:#0d1319; --panel:#141c24; --line:#26333e; --text:#dbe5ea; --muted:#8fa3b0; --accent:#4fe0c0; --warn:#e8a33d; --bad:#ff7a6b; --taken:#e27ab5; color-scheme:dark; }
+  * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.4 system-ui, "Segoe UI", sans-serif; }
+  header { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; padding:10px 16px; border-bottom:1px solid var(--line); }
+  h1 { font-size:18px; margin:0; }
+  header span { color:var(--muted); font-size:12px; }
+  .home { font-size:13px; text-decoration:none; }
+  a { color:var(--accent); }
+  main { display:grid; grid-template-columns:minmax(0,1fr) 370px; gap:10px; padding:10px; align-items:start; }
+  .col { display:flex; flex-direction:column; gap:10px; min-width:0; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:10px; }
+  h2 { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:0 0 8px; }
+  label { display:block; color:var(--muted); font-size:12px; margin-bottom:7px; }
+  input, select, button { width:100%; margin-top:2px; padding:6px 7px; background:#0d1319; color:var(--text); border:1px solid var(--line); border-radius:4px; font:inherit; }
+  input[type=checkbox] { width:auto; margin:0 6px 0 0; vertical-align:middle; }
+  input[type=range] { padding:0; accent-color:var(--accent); }
+  button { cursor:pointer; background:#1b2732; }
+  @media (hover:hover) { button:hover { border-color:var(--accent); } }
+  button:disabled { opacity:.4; cursor:default; }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  output { float:right; color:var(--text); font:12px ui-monospace, Consolas, monospace; }
+  .chainLabel { color:var(--muted); font-size:11px; margin:6px 0 3px; }
+  .chain { display:flex; flex-wrap:wrap; gap:4px; }
+  .chain button { width:auto; flex:1 1 92px; margin:0; padding:6px 5px; font-size:12px; border-bottom-width:3px; }
+  .chain button.active { outline:2px solid var(--text); outline-offset:-1px; }
+  [data-health=ok] { border-bottom-color:var(--accent); }
+  [data-health=warn] { border-bottom-color:var(--warn); }
+  [data-health=bad] { border-bottom-color:var(--bad); }
+  [data-health=taken] { border-bottom-color:var(--taken); }
+  .row { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+  .row section { min-width:0; }
+  canvas { display:block; width:100%; border-radius:3px; background:#0a0f14; }
+  .video { aspect-ratio:16/9; image-rendering:pixelated; }
+  #iq { height:300px; }
+  #history { height:170px; }
+  .stack { display:flex; flex-direction:column; gap:10px; }
+  dl { display:grid; grid-template-columns:1fr auto; gap:3px 10px; margin:0; font:12px ui-monospace, Consolas, monospace; }
+  dt { color:var(--muted); } dd { margin:0; text-align:right; font-variant-numeric:tabular-nums; }
+  #rxState { font-weight:600; padding-bottom:1px; border-bottom:2px solid transparent; }
+  #lessonTitle { font-size:15px; margin:0 0 4px; }
+  #lessonText { margin:0 0 8px; font-size:13px; min-height:150px; }
+  .lessonNav, .buttons { display:flex; align-items:center; gap:6px; }
+  .lessonNav button, .buttons button { width:auto; margin:0; }
+  .buttons button { flex:1; }
+  #lessonPos { flex:1; text-align:center; color:var(--muted); font-size:12px; }
+  .note { font-size:12px; color:var(--muted); margin:6px 0 0; }
+  @media (max-width:1180px) {
+    main { grid-template-columns:minmax(0,1fr); padding:10px 16px; }
+    .col { display:contents; }
+    .col > * { order:4; min-width:0; }
+    #lessonBox { order:1; } #controlBox { order:2; } #chainBox, #videoRow { order:3; }
+    input:not([type=checkbox]):not([type=range]), select { font-size:16px; }
+    button { min-height:40px; }
+    .chain button { flex:1 1 30%; }
+  }
+  @media (max-width:720px) { .row { grid-template-columns:minmax(0,1fr); } }
+</style>
+</head>
+<body>
+<header><a href="/" class="home">SatLab</a><h1>DVB-S2 Overlay Lab</h1><span>How a receiver loses a signal, captures another, and how operators defend it</span></header>
+<main>
+  <div class="col">
+    <section id="chainBox">
+      <h2>Signal chain: choose a block</h2>
+      <div class="chainLabel">Uplink and satellite</div>
+      <div class="chain" id="chainTx"></div>
+      <div class="chainLabel">Receive site</div>
+      <div class="chain" id="chainRx"></div>
+      <p class="note" id="blockNote" aria-live="polite"></p>
+    </section>
+    <div class="row" id="videoRow">
+      <div class="stack">
+        <section><h2>Carrier video (sent)</h2><canvas class="video" id="srcCarrier" width="320" height="180" role="img" aria-label="Test pattern sent on the carrier"></canvas></section>
+        <section><h2>Overlay video (sent)</h2><canvas class="video" id="srcOverlay" width="320" height="180" role="img" aria-label="Test pattern sent on the overlay signal"></canvas></section>
+      </div>
+      <section><h2>Received IQ</h2><canvas id="iq" role="img" aria-label="Received constellation"></canvas></section>
+      <section><h2>Decoded video</h2><canvas class="video" id="decoded" width="320" height="180" role="img" aria-label="Picture produced by the receiver"></canvas>
+        <dl style="margin-top:10px">
+          <dt>Receiver</dt><dd id="rxState">–</dd>
+          <dt>Following</dt><dd id="rxSource">–</dd>
+          <dt>MER</dt><dd id="mer">–</dd>
+        </dl>
+      </section>
+    </div>
+    <section>
+      <h2>Es/(N+I) over time</h2>
+      <canvas id="history" role="img" aria-label="Carrier and overlay Es/(N+I) over time, with the decoding threshold"></canvas>
+      <p class="note"><span style="color:#0f9c7e">■</span> Carrier &nbsp; <span style="color:#d0559a">■</span> Overlay &nbsp; Dashed: threshold needed to decode</p>
+    </section>
+  </div>
+
+  <div class="col">
+    <section id="lessonBox">
+      <h2>Guided walkthrough</h2>
+      <h3 id="lessonTitle"></h3>
+      <p id="lessonText" aria-live="polite"></p>
+      <div class="lessonNav">
+        <button id="lessonBack">Back</button>
+        <span id="lessonPos"></span>
+        <button id="lessonNext">Next</button>
+      </div>
+    </section>
+    <section id="controlBox">
+      <h2>Simulation</h2>
+      <label><input id="overlayOn" type="checkbox" />Overlay signal present</label>
+      <label>Overlay relative to carrier <output id="ratioDbOut"></output><input id="ratioDb" type="range" min="-30" max="15" step="0.5" /></label>
+      <label>Link C/N <output id="cnDbOut"></output><input id="cnDb" type="range" min="6" max="24" step="0.5" /></label>
+      <label>MODCOD<select id="modcod"></select></label>
+      <label><input id="authOn" type="checkbox" />Content authentication</label>
+      <div class="buttons"><button id="ramp">Run overlay ramp</button><button id="pause">Pause</button><button id="restart">Restart</button></div>
+    </section>
+    <section>
+      <h2>Monitoring position</h2>
+      <dl>
+        <dt>Es/(N+I) carrier</dt><dd id="esCarrier">–</dd>
+        <dt>Es/(N+I) overlay</dt><dd id="esOverlay">–</dd>
+        <dt>Needed to decode</dt><dd id="esNeed">–</dd>
+        <dt>Level above normal</dt><dd id="monLevel">–</dd>
+        <dt>Service identity</dt><dd id="monId">–</dd>
+        <dt>Content signature</dt><dd id="monAuth">–</dd>
+      </dl>
+      <p class="note" id="monAlert"></p>
+    </section>
+    <p class="note">A simulator with a fictional satellite, random symbols and locally drawn pictures. It generates no real DVB-S2 signal and has no transmit path. Unauthorized transmission to a satellite is illegal.</p>
+  </div>
+</main>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

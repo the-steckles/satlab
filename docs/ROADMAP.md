@@ -13,7 +13,7 @@ Each tool sets up the next.
 | 1 | Peaker | Live | Pointing, peaking, side lobes, auto-peak, step-track |
 | 2 | Mixers and intermodulation | Built on `overnight/simulators` | Creates the shared signal engine |
 | 3 | Link interference | Built on `overnight/simulators` | Reuses the amplifier model to explain saturation and power robbing |
-| 4 | DVB-S2 signal overlay | Plan only, see `dvbs2-plan.md` | Needs receiver-state modeling on top of the link model |
+| 4 | DVB-S2 signal overlay | Built on `overnight/simulators`, see `dvbs2-plan.md` | Needs receiver-state modeling on top of the link model |
 
 ## 2. Mixers and intermodulation
 

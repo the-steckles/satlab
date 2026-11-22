@@ -45,6 +45,8 @@
   canvas { display:block; width:100%; border-radius:3px; touch-action:pan-y; }
   #spectrum { height:400px; }
   #slope { height:280px; }
+  #plan { height:130px; }
+  #filterPlot { height:210px; }
   .legend { display:flex; flex-wrap:wrap; gap:3px 12px; margin-top:6px; font-size:11px; color:var(--muted); }
   .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:-1px; }
   dl { display:grid; grid-template-columns:1fr auto; gap:3px 10px; margin:0; font:12px ui-monospace, Consolas, monospace; }
@@ -66,7 +68,7 @@
     /* Keep the experiment, test points and spectrum together, ahead of the settings. */
     .col { display:contents; }
     .col > * { order:4; min-width:0; }
-    #lessonBox { order:1; } #chainBox { order:2; } #specBox { order:3; }
+    #lessonBox { order:1; } #chainBox { order:2; } #planBox { order:3; } #specBox { order:3; } #filterBox { order:3; }
     #spectrum { height:340px; }
     input:not([type=checkbox]):not([type=range]), select { font-size:16px; }
     button { min-height:40px; }
@@ -90,6 +92,8 @@
       <h2>Mixer</h2>
       <label>LO frequency (MHz)<input id="loMHz" type="number" min="1" max="40000" step="1" /></label>
       <label>LO drive <output id="loDbmOut"></output><input id="loDbm" type="range" min="-10" max="17" step="0.5" /></label>
+      <label>Wanted product<select id="product"></select></label>
+      <label><input id="holdOutput" type="checkbox" />Keep output frequency (retunes LO)</label>
       <label>Mixer type<select id="mixerType"><option value="single">Single-ended</option><option value="balanced">Single-balanced</option><option value="double">Double-balanced</option></select></label>
     </section>
     <section>
@@ -108,6 +112,12 @@
     <section id="chainBox">
       <h2>Signal chain: choose a test point</h2>
       <div id="chain" role="group" aria-label="Test points"></div>
+      <p class="note" id="stageNote"></p>
+    </section>
+    <section id="planBox">
+      <h2>Frequency plan and image</h2>
+      <canvas id="plan" role="img" aria-label="Number line showing the input, LO, image and output frequencies"></canvas>
+      <p class="note" id="planText"></p>
     </section>
     <section id="specBox">
       <div class="plotHead">
@@ -117,6 +127,21 @@
       </div>
       <canvas id="spectrum" role="img" aria-label="Spectrum of the signal at the chosen test point, with each mixing product labeled"></canvas>
       <div class="legend" id="legend"></div>
+    </section>
+    <section id="filterBox">
+      <h2>Filter response</h2>
+      <label>Filter<select id="filterPick"></select></label>
+      <canvas id="filterPlot" role="img" aria-label="Loss of the selected filter against frequency, with the products arriving at its input marked"></canvas>
+      <p class="note" id="filterText"></p>
+      <div class="two" style="margin-top:8px">
+        <label>Center (MHz)<input id="filterCenter" type="number" min="1" max="40000" step="any" /></label>
+        <label>3 dB bandwidth (MHz)<input id="filterBw" type="number" min="0.1" max="20000" step="any" /></label>
+        <label>Order (poles) <output id="filterPolesOut"></output><input id="filterPoles" type="range" min="1" max="9" step="1" /></label>
+        <label>Insertion loss <output id="filterLossOut"></output><input id="filterLoss" type="range" min="0" max="6" step="0.1" /></label>
+      </div>
+      <label><input id="filterTrack" type="checkbox" />Center follows the signal</label>
+      <label><input id="filterEnabled" type="checkbox" />This filter in circuit</label>
+      <button id="filterReset">Reset this filter</button>
     </section>
     <section>
       <h2>Products at this point</h2>
@@ -141,8 +166,10 @@
       <h2>Measured at this point</h2>
       <dl>
         <dt>Wanted carrier</dt><dd id="mCarrier">–</dd>
-        <dt>Gain from input</dt><dd id="mGain">–</dd>
+        <dt>Small-signal gain</dt><dd id="mGain">–</dd>
+        <dt>Actual gain</dt><dd id="mGainActual">–</dd>
         <dt>Noise figure</dt><dd id="mNf">–</dd>
+        <dt>Spectrum</dt><dd id="mSense">–</dd>
         <dt>Worst unwanted</dt><dd id="mWorst">–</dd>
         <dt>Third-order IM</dt><dd id="mIm3">–</dd>
         <dt>Input IP3</dt><dd id="mIip3">–</dd>

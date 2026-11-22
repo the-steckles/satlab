@@ -17,6 +17,9 @@ function fitSentence(fit, axis) {
   return ` Last ${AXIS[axis]} fit: move ${signed(fit.delta)}${atLimit ? ', the most one cycle allows, so the peak is probably farther that way' : ''}.`;
 }
 
+// A clean result ends on a real peak on both axes, with a final move smaller than the limit.
+export const fitsSettled = (fits) => [fits?.az, fits?.el].every((f) => f && f.peak !== false && Math.abs(f.delta) < f.step - 1e-9);
+
 const dbm = (v) => `${v.toFixed(1)} dBm`;
 const relDb = (v) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)} dB`;
 // Controllers work in their own frame, which program track shifts along the orbit.
@@ -40,7 +43,9 @@ function describeMeasure(run, r) {
   const atLimit = Math.abs(r.fit.delta) >= r.step - 1e-9;
   return {
     title: `${where}: ${axisName} plus one step, then fit`,
-    text: `Moved ${r.step.toFixed(3)}°${sky} above center, to ${axisName} ${pos}°, and read ${dbm(r.db)}, which is ${change} compared with center. The parabola through all three readings peaks at ${signed(r.fit.delta)}, so the center moves from ${from}° to ${to}°.${atLimit ? ' That is the largest move one fit allows, so the true peak is probably farther that way.' : ''}`,
+    text: r.fit.peak === false
+      ? `Moved ${r.step.toFixed(3)}°${sky} above center, to ${axisName} ${pos}°, and read ${dbm(r.db)}, which is ${change} compared with center. These three readings curve upward, so there is no peak between them. The center steps ${signed(r.fit.delta)} toward the stronger side, from ${from}° to ${to}°.`
+      : `Moved ${r.step.toFixed(3)}°${sky} above center, to ${axisName} ${pos}°, and read ${dbm(r.db)}, which is ${change} compared with center. The parabola through all three readings peaks at ${signed(r.fit.delta)}, so the center moves from ${from}° to ${to}°.${atLimit ? ' That is the largest move one fit allows, so the true peak is probably farther that way.' : ''}`,
   };
 }
 
@@ -60,7 +65,7 @@ export function describeRecord(run, r) {
     return { steps, active, title: 'No beacon found', text: `The strongest reading was ${dbm(r.bestDb)}, too close to the noise floor to trust, so the antenna returned to where it started.` };
   }
   if (r.stage === 'done') {
-    return { steps, active, title: 'Peaked', text: `Final pointing is azimuth ${pos.az.toFixed(3)}°, elevation ${pos.el.toFixed(3)}°.${fitSentence(r.fits.az, 'az')}${fitSentence(r.fits.el, 'el')}` };
+    return { steps, active, title: fitsSettled(r.fits) ? 'Peaked' : 'Stopped without a clean peak', text: `Final pointing is azimuth ${pos.az.toFixed(3)}°, elevation ${pos.el.toFixed(3)}°.${fitSentence(r.fits.az, 'az')}${fitSentence(r.fits.el, 'el')}` };
   }
   if (r.stage === 'hold') {
     return { steps, active, title: `Cycle ${r.cycle}: holding`, text: `Settled at azimuth ${pos.az.toFixed(3)}°, elevation ${pos.el.toFixed(3)}°, and held for about ${r.holdS.toFixed(0)} s before the next cycle.${fitSentence(r.fits.az, 'az')}${fitSentence(r.fits.el, 'el')}` };
@@ -97,6 +102,12 @@ export function describeController(info) {
   if (info.kind === 'peak') {
     const search = SEARCH[info.pattern];
     const PEAK_STEPS = [search.name, 'Refine', 'Peaked'];
+    if (info.confirming) {
+      return {
+        steps: PEAK_STEPS, active: 0, title: 'Confirming the strongest point',
+        text: 'With hundreds of readings, the luckiest noise spike can look like a signal. The controller returns to the strongest point and averages several sweeps. A real beacon stays up, and a noise spike falls back to the floor.',
+      };
+    }
     if (info.phase === 'search') {
       return {
         steps: PEAK_STEPS, active: 0, title: `${search.name}: point ${info.index + 1} of ${info.total}`,
@@ -111,8 +122,10 @@ export function describeController(info) {
     }
     if (info.phase === 'done') {
       return {
-        steps: PEAK_STEPS, active: 2, title: 'Peaked',
-        text: `Search found the strongest point, and three passes of parabola fits centered the beam.${fitSentence(info.scan?.fits.az, 'az')}${fitSentence(info.scan?.fits.el, 'el')} Small final moves mean the fit has converged.`,
+        steps: PEAK_STEPS, active: 2, title: fitsSettled(info.scan?.fits) ? 'Peaked' : 'Stopped without a clean peak',
+        text: fitsSettled(info.scan?.fits)
+          ? `Search found the strongest point, and three passes of parabola fits centered the beam.${fitSentence(info.scan?.fits.az, 'az')}${fitSentence(info.scan?.fits.el, 'el')} Small final moves mean the fit has converged.`
+          : `The last fit did not find a clear top, so this is not a confirmed peak.${fitSentence(info.scan?.fits.az, 'az')}${fitSentence(info.scan?.fits.el, 'el')} Check the level against the expected value and search again.`,
       };
     }
     return {

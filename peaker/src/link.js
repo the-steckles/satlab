@@ -51,7 +51,8 @@ export function computeTrace({ centerHz, spanHz, rbwHz, bins, noiseFloorDbm, car
     }
     let cw = 0;
     for (const c of carriers) {
-      const d = Math.abs(f - c.freqHz);
+      // Peak detection: each display bin reports the strongest point it covers, so a narrow RBW cannot hide a carrier.
+      const d = Math.max(0, Math.abs(f - c.freqHz) - df / 2);
       const p = 10 ** (c.dbm / 10);
       cw += p * Math.exp(-0.5 * (d / sigma) ** 2);
       if (d > rbwHz) cw += p * 10 ** ((phaseNoiseDbcHz(d) + 10 * Math.log10(rbwHz)) / 10);

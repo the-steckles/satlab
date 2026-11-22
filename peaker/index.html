@@ -152,6 +152,7 @@
       <label>Center (MHz)<input id="center" type="number" step="0.001" /></label>
       <label>Span<select id="span"></select></label>
       <label>RBW<select id="rbw"></select></label>
+      <p class="note" id="rbwWarn" hidden></p>
       <label>Average<select id="avg"><option value="1">Off</option><option value="4" selected>4</option><option value="16">16</option><option value="64">64</option></select></label>
       <label><span><input id="hold" type="checkbox" />Max hold</span><button id="clearHold">Clear</button></label>
       <button id="recenter">Center beacon</button>
@@ -192,7 +193,7 @@
       <h2>Beacon level</h2>
       <div class="big" id="level" aria-live="off">–</div>
       <dl class="readout">
-        <dt>C/N in tracking BW</dt><dd id="rCn">–</dd><dt>Expected on-axis</dt><dd id="rExpected">–</dd>
+        <dt>C/N in 3 kHz</dt><dd id="rCn">–</dd><dt>Expected on-axis</dt><dd id="rExpected">–</dd>
       </dl>
     </section>
     <section>

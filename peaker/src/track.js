@@ -80,7 +80,9 @@ function crossScan(start, step, dwell, onReading = () => {}) {
       const record = { stage: 'measure', axis: name, point: idx, step, db: v, az: at.az, el: at.el, samples: [...samples], fits: { ...fits }, fit: null, oldCenter, newCenter: null };
       if (++idx < 3) { onReading(record); return null; }
       const delta = parabolicOffset(samples[1], samples[0], samples[2], step);
-      fits[name] = { step, center: samples[0], minus: samples[1], plus: samples[2], delta };
+      // An upward-curving fit has no top, so the move is only a step toward the stronger side.
+      const peak = samples[1] - 2 * samples[0] + samples[2] < -1e-6;
+      fits[name] = { step, center: samples[0], minus: samples[1], plus: samples[2], delta, peak };
       center = axis === 0 ? offset(center, delta, 0) : offset(center, 0, delta);
       onReading({ ...record, fit: fits[name], fits: { ...fits }, newCenter: { ...center } });
       const level = samples[0];
@@ -91,20 +93,29 @@ function crossScan(start, step, dwell, onReading = () => {}) {
   };
 }
 
-export function createAutoPeak({ az, el, beamwidthDeg, radiusDeg, noiseDbm, dwell = 2, marginDb = 6, pattern = 'spiral' }) {
+const CONFIRM_SWEEPS = 8, CONFIRM_MARGIN_DB = 3;
+
+export function createAutoPeak({ az, el, beamwidthDeg, radiusDeg, noiseDbm, dwell = 2, pattern = 'spiral' }) {
   const origin = { az, el };
   const path = (pattern === 'raster' ? rasterPoints : spiralPoints)(radiusDeg, beamwidthDeg * 0.5);
   const points = path.map((p) => offset(origin, p.x, p.y));
   const measured = [], records = [];
   const run = { kind: 'peak', pattern, path, records };
-  const avg = averager(dwell);
+  const avg = averager(dwell), confirmAvg = averager(CONFIRM_SWEEPS);
+  // Noise power is exponential, so the best of N readings has about a 1 in 1000 chance of passing this.
+  const searchDb = noiseDbm + 10 * Math.log10(Math.log(points.length) + Math.log(1000));
   let i = 0, bestIndex = 0, best = { db: -Infinity, ...origin }, phase = 'search', scan = null, cycles = 0;
+  const notFound = () => {
+    phase = 'notfound';
+    pushRecord(records, { stage: 'notfound', az: origin.az, el: origin.el, bestIndex, bestDb: best.db });
+    best = { ...best, ...origin };
+  };
 
   return {
     run,
     get phase() { return phase; },
     get explain() {
-      return { kind: 'peak', phase, index: Math.min(i, points.length - 1), total: points.length, pattern, path, measured, bestIndex, bestDb: best.db, pass: Math.min(cycles + 1, 3), scan: scan?.state ?? null };
+      return { kind: 'peak', phase: phase === 'confirm' ? 'search' : phase, confirming: phase === 'confirm', index: Math.min(i, points.length - 1), total: points.length, pattern, path, measured, bestIndex, bestDb: best.db, pass: Math.min(cycles + 1, 3), scan: scan?.state ?? null };
     },
     get progress() { return phase === 'search' ? i / points.length : 1; },
     target: () => (phase === 'search' ? points[Math.min(i, points.length - 1)] : phase === 'refine' ? scan.target() : { az: best.az, el: best.el }),
@@ -116,12 +127,11 @@ export function createAutoPeak({ az, el, beamwidthDeg, radiusDeg, noiseDbm, dwel
         if (v > best.db) { best = { db: v, ...points[i] }; bestIndex = i; }
         pushRecord(records, { stage: 'search', index: i, total: points.length, db: v, az: points[i].az, el: points[i].el, bestIndex, bestDb: best.db });
         if (++i < points.length) return;
-        if (best.db < noiseDbm + marginDb) {
-          phase = 'notfound';
-          best = { ...best, ...origin };
-          pushRecord(records, { stage: 'notfound', az: origin.az, el: origin.el, bestIndex, bestDb: best.db });
-          return;
-        }
+        if (best.db < searchDb) notFound(); else phase = 'confirm';
+      } else if (phase === 'confirm') {
+        const v = confirmAvg(db);
+        if (v === null) return;
+        if (v < noiseDbm + CONFIRM_MARGIN_DB) { notFound(); return; }
         phase = 'refine';
         scan = crossScan(best, beamwidthDeg / 3, dwell + 1, (r) => pushRecord(records, { ...r, pass: cycles + 1 }));
       } else if (phase === 'refine') {

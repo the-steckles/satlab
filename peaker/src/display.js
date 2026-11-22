@@ -120,6 +120,7 @@ export function createWaterfall(canvas, bins, rows = 320) {
       }
       octx.putImageData(line, 0, 0);
     },
+    clear() { octx.fillStyle = `rgb(${LUT[0]})`; octx.fillRect(0, 0, bins, rows); },
     draw(centerHz, spanHz) {
       const p = prepare(canvas);
       p.ctx.imageSmoothingEnabled = false;
@@ -328,7 +329,8 @@ function drawFit(ctx, x0, w, h, title, fit, partial, step, mark = -1) {
   ctx.fillText(`−${step.toFixed(3)}°`, X(-step), h - 17);
   ctx.fillText('0', X(0), h - 17);
   ctx.fillText(`+${step.toFixed(3)}°`, X(step), h - 17);
-  if (fit && !partial?.length) ctx.fillText(`peak at ${Math.abs(fit.delta) < 0.0005 ? '0.000' : `${fit.delta > 0 ? '+' : '−'}${Math.abs(fit.delta).toFixed(3)}`}°`, x0 + w / 2, h - 3);
+  if (fit && !partial?.length && fit.peak === false) ctx.fillText('no peak here, stepping toward stronger side', x0 + w / 2, h - 3);
+  else if (fit && !partial?.length) ctx.fillText(`peak at ${Math.abs(fit.delta) < 0.0005 ? '0.000' : `${fit.delta > 0 ? '+' : '−'}${Math.abs(fit.delta).toFixed(3)}`}°`, x0 + w / 2, h - 3);
   else ctx.fillText(`${shown.length} of 3 readings`, x0 + w / 2, h - 3);
 }
 

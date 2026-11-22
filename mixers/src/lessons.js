@@ -9,12 +9,16 @@ export const LESSONS = {
       text: ({ r, s, node }) => `Multiplying ${mhz(r.params.rfMHz)} by a ${mhz(r.params.loMHz)} LO creates a difference at ${mhz(Math.abs(r.params.rfMHz - r.params.loMHz))} and a sum at ${mhz(r.params.rfMHz + r.params.loMHz)}. The wanted product is ${db(s.carrier?.dbm)} dBm, so this mixer has ${(r.params.rfDbm - (s.carrier?.dbm ?? 0)).toFixed(1)} dB of conversion loss. Weaker lines are real products too. Hover over or tap them to read their names. ${node.products.length} products are being tracked.`,
     },
     {
-      title: 'Filter the IF', set: { filtersOn: true }, span: 'all',
-      text: ({ s }) => `A mixer has no idea which product you want, so a filter after it keeps the difference and rejects the rest. With the low-pass in, the strongest unwanted product is ${db(s.worstDbc)} dBc (${s.worst?.label ?? 'none'}).`,
+      title: 'You choose the product', set: { product: 'sum', filtersOn: true }, span: 'all',
+      text: ({ r, s }) => `The mixer always makes both sidebands. The filter decides which one you use. It now keeps F1 + LO at ${mhz(r.wantedMHz)}, at ${db(s.carrier?.dbm)} dBm. Use Wanted product to try each option. Real equipment uses all three: F1 + LO, F1 − LO and LO − F1, depending on the frequency plan.`,
     },
     {
-      title: 'The image problem', set: { imageOn: true, imageDbm: -10 }, span: 'near',
-      text: ({ r, s }) => `A signal at ${mhz(r.imageMHz)} is the same distance from the LO, on the other side. It converts to exactly the same IF, at ${db(s.imageDbc)} dBc against your carrier, and no filter after the mixer can separate them. That is why image rejection has to happen before the mixer.`,
+      title: 'Filter the difference', set: { product: 'rfMinusLo', filtersOn: true }, span: 'all',
+      text: ({ s }) => `Back to F1 − LO. A mixer has no idea which product you want, so a filter after it keeps that one and rejects the rest. With the filter in, the strongest unwanted product is ${db(s.worstDbc)} dBc (${s.worst?.label ?? 'none'}).`,
+    },
+    {
+      title: 'What an image is', set: { imageOn: true, imageDbm: -10 }, span: 'near',
+      text: ({ r, s }) => `Subtraction loses the sign: ${+r.params.rfMHz} − ${+r.params.loMHz} and ${+r.params.loMHz} − ${+r.imageMHz} are both ${+r.wantedMHz}. So a mixer converts signals from both sides of its LO to the same output. Your input is at ${mhz(r.params.rfMHz)}, and its mirror across the LO, the image, is at ${mhz(r.imageMHz)}. Anything there lands on your carrier, here at ${db(s.imageDbc)} dBc. The diagram shows the two equal distances. After mixing they occupy one frequency, so only a filter before the mixer can remove the image.`,
     },
     {
       title: 'Why balance matters', set: { mixerType: 'single', filtersOn: false, imageOn: false }, span: 'all',
@@ -37,7 +41,11 @@ export const LESSONS = {
       text: ({ s }) => `Raising the input 10 dB raised the carriers about 10 dB, and the third-order products about 30 dB. They are now ${db(s.im3Dbc)} dBc. Extend those two slopes on the plot and they meet at the intercept point, IP3. This chain measures ${db(s.oip3)} dBm at its output.`,
     },
     {
-      title: 'High-side LO flips the spectrum', set: { loMHz: 2300, rfDbm: -20 }, span: 'near',
+      title: 'Compression and saturation', set: { twoTone: false, rfDbm: 10 }, span: 'near',
+      text: ({ r, s, node }) => `Every device has a limit on how much power it can deliver. Near that limit, more input yields less additional output. This is compression, and P1dB is the point where gain has dropped 1 dB. Pushed further, output stops rising at all. That is saturation. At ${db(r.params.rfDbm)} dBm in, an ideal mixer would output ${db(r.params.rfDbm + node.gainDb)} dBm, but this one gives ${db(s.carrier?.dbm)} dBm. The flattening curve on the output plot shows it. The same limit creates the third-order products you just measured.`,
+    },
+    {
+      title: 'High-side LO flips the spectrum', set: { twoTone: true, loMHz: 2300, rfDbm: -20 }, span: 'near',
       text: ({ r, s }) => `With the LO above the RF, IF = LO − RF. A higher RF now gives a lower IF, so the spectrum is inverted. The product at ${mhz((s.carrier?.hz ?? 0) / 1e6)} is ${s.carrier?.label}. Modems need to know this, because inverted carriers will not lock without the matching setting.`,
     },
   ],
@@ -54,6 +62,10 @@ export const LESSONS = {
       title: 'Overdrive the HPA', set: { filtersOn: true, rfDbm: -15 }, span: 'near',
       text: ({ s }) => `Pushing the modem level 15 dB harder drives the HPA toward compression. Third-order products are now ${db(s.im3Dbc)} dBc. These land in neighboring channels, so uplink power is limited by linearity, not just by the HPA’s rating.`,
     },
+    {
+      title: 'A high-side upconverter', set: { rfDbm: -30, loMHz: 15450, product: 'loMinusRf' }, span: 'near',
+      text: ({ r, s }) => `Upconversion is not always LO + IF. With a ${mhz(r.params.loMHz)} LO, LO − IF also reaches ${mhz(r.wantedMHz)}, at ${db(s.carrier?.dbm)} dBm. This output is spectrally inverted, so the modem or receiver must be set to match. Both plans are valid, and the choice usually comes down to LO availability and where the unwanted products fall.`,
+    },
   ],
   satRx: [
     {
@@ -62,21 +74,29 @@ export const LESSONS = {
     },
     {
       title: 'Image on the satellite', set: { filtersOn: false, imageOn: true, imageDbm: -80 }, span: 'near',
-      text: ({ r, s }) => `Energy near ${mhz(r.imageMHz)} would land on the same channel at ${db(s.imageDbc)} dBc. With no input filter, that noise and interference fold straight into your transponder.`,
+      text: ({ r, s, node }) => `Energy near ${mhz(r.imageMHz)} reaches the same channel through Image + LO, here at ${db(s.imageDbc)} dBc. With no image filter, the LNA’s amplified noise at that frequency also converts onto your carrier, so the noise figure is now ${node.nfDb.toFixed(2)} dB.`,
     },
     {
       title: 'Input filter restored', set: { filtersOn: true, imageOn: true, imageDbm: -80 }, span: 'near',
-      text: ({ s }) => `With the receive filter in, the image contribution drops to ${db(s.imageDbc)} dBc. Filtering ahead of the mixer protects every channel behind it.`,
+      text: ({ s, node }) => `With the filters in, the image contribution ${s.imageDbc === null ? 'falls below anything this model tracks' : `drops to ${db(s.imageDbc)} dBc`} and the noise figure recovers to ${node.nfDb.toFixed(2)} dB. The image filter sits after the LNA because a filter before it could not remove the noise the LNA adds itself.`,
+    },
+    {
+      title: 'Another translation plan', set: { imageOn: false, loMHz: 26750, product: 'loMinusRf' }, span: 'near',
+      text: ({ r }) => `Satellites do not all translate with F − LO. Here a ${mhz(r.params.loMHz)} LO gives LO − F = ${mhz(r.wantedMHz)}, the same downlink from a different plan. Because the LO is above the input, the transponder inverts the spectrum. A ground station must account for that when it sets its carrier frequency and spectral sense.`,
     },
   ],
   satTx: [
     {
+      title: 'What a TWTA is', set: {}, span: 'near',
+      text: () => 'A traveling-wave tube amplifier (TWTA) is the satellite’s final power stage. An electron beam runs along a helix, and the RF wave on that helix takes energy from the beam. The beam’s DC power limits how much RF the tube can produce. That maximum is called saturation. Click the TWTA block to probe its output.',
+    },
+    {
       title: 'Operating with backoff', set: {}, span: 'near',
-      text: ({ s }) => `The TWTA is backed off from saturation. Each tone leaves at ${db(s.carrier?.dbm)} dBm, and third-order products are ${db(s.im3Dbc)} dBc.`,
+      text: ({ s }) => `Backoff means deliberately running below saturation. The amplifier is more linear there, so it adds less distortion. Each tone leaves at ${db(s.carrier?.dbm)} dBm, and third-order products are ${db(s.im3Dbc)} dBc.`,
     },
     {
       title: 'Into saturation', set: { rfDbm: -42 }, span: 'near',
-      text: ({ s }) => `Adding 10 dB of drive gives far less than 10 dB more output, because the tube is saturating. Each tone is now ${db(s.carrier?.dbm)} dBm, and third-order products have climbed to ${db(s.im3Dbc)} dBc. This is why multi-carrier transponders run with backoff.`,
+      text: ({ s }) => `Adding 10 dB of drive gives far less than 10 dB more output, because the tube is running out of beam power. Each tone is now ${db(s.carrier?.dbm)} dBm, and third-order products have climbed to ${db(s.im3Dbc)} dBc. This is why multi-carrier transponders run with backoff.`,
     },
     {
       title: 'Backing off', set: { rfDbm: -62 }, span: 'near',
@@ -95,6 +115,10 @@ export const LESSONS = {
     {
       title: 'Restore the image filter', set: { filtersOn: true }, span: 'near',
       text: ({ s }) => `With the filter back between the LNA and mixer, the image falls to ${db(s.imageDbc)} dBc. A filter after the mixer could not do this, because by then the image and the carrier share one frequency.`,
+    },
+    {
+      title: 'A high-side LNB', set: { loMHz: 13250, product: 'loMinusRf' }, span: 'near',
+      text: ({ r, s }) => `An LNB can also place its LO above the band. LO − RF puts the carrier at ${mhz(r.wantedMHz)}, at ${db(s.carrier?.dbm)} dBm. The image has moved to ${mhz(r.imageMHz)}, and the IF is inverted, so the modem’s spectral inversion setting has to change.`,
     },
   ],
 };

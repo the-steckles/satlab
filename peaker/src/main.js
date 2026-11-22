@@ -1,10 +1,10 @@
 import { beamwidthDeg, gainDbi, isModelReliable, offAxisDeg, peakGainDbi } from './antenna.js';
 import { BANDS, bandOf, bandsFor, resolveBeacons } from './frequencies.js';
 import { createWaterfall, drawExplainer, drawHistory, drawPattern, drawSpectrum } from './display.js';
-import { describeController, describeRecord, recordView } from './explain.js';
+import { describeController, describeRecord, fitsSettled, recordView } from './explain.js';
 import { findChip, nextGroup, prevGroup } from './timeline.js';
 import { TRANSPONDER_EIRP_DBW, atmosphericLossDb, beaconEirpDbw, computeTrace, dopplerHz, fsplDb, noiseDbm, peakNear, receivedDbm, systemTempK } from './link.js';
-import { isGeostationary, look, makeSatrec, nextPass } from './orbit.js';
+import { isGeostationary, isInclinedGeo, look, makeSatrec, nextPass, orbitName } from './orbit.js';
 import { createAutoPeak, createStepTrack } from './track.js';
 
 const $ = (id) => document.getElementById(id);
@@ -82,7 +82,7 @@ function applyOmm(omm) {
   S.satrec = makeSatrec(omm);
   S.isGeo = isGeostationary(omm);
   $('rNorad').textContent = omm.NORAD_CAT_ID;
-  $('rOrbit').textContent = S.isGeo ? 'Geostationary' : omm.MEAN_MOTION > 11 ? 'LEO' : omm.MEAN_MOTION > 1.5 ? 'MEO / HEO' : 'High orbit';
+  $('rOrbit').textContent = orbitName(omm);
   $('rEpoch').textContent = omm.EPOCH.slice(0, 16).replace('T', ' ') + 'Z';
 }
 
@@ -92,7 +92,7 @@ async function selectSatellite(omm) {
   S.timeOffsetMs = 0;
   applyOmm(omm);
   $('satSearch').value = omm.OBJECT_NAME;
-  $('program').checked = !S.isGeo;
+  $('program').checked = !S.isGeo || isInclinedGeo(omm); // An inclined satellite traces a daily figure-8 across the beam.
   populateBands();
   mispoint();
   const fresh = await freshElements(omm.NORAD_CAT_ID);
@@ -156,7 +156,13 @@ function syncAnalyzer() {
   resetTraces();
 }
 
-function resetTraces() { S.avgTrace = null; S.holdTrace = null; }
+function resetTraces() {
+  S.avgTrace = null; S.holdTrace = null;
+  waterfall?.clear(); // Old rows would sit under the wrong frequency labels.
+  const sweepS = (2.5 * S.spanHz) / S.rbwHz ** 2; // Typical swept-analyzer time for a Gaussian RBW.
+  $('rbwWarn').hidden = sweepS < 1;
+  if (sweepS >= 1) $('rbwWarn').textContent = `A real swept analyzer would need about ${sweepS < 3600 ? `${Math.round(sweepS)} s` : `${(sweepS / 3600).toFixed(1)} hours`} per sweep at this span and RBW. This display updates faster than that.`;
+}
 
 function freqHz() { return S.beacon.freqMHz * 1e6; }
 
@@ -461,11 +467,15 @@ function updateControlStatus(l) {
   if (!S.ctl) return;
   if (S.ctlKind === 'peak') {
     if (S.ctl.phase === 'search') setStatus(`Searching ${(S.ctl.progress * 100).toFixed(0)}%`);
+    else if (S.ctl.phase === 'confirm') setStatus('Confirming the strongest point…');
     else if (S.ctl.phase === 'refine') setStatus('Refining on the main lobe…');
     else if (S.ctl.phase === 'done') {
       const t = S.ctl.target();
       S.target = { az: wrap360(t.az + S.frame.az), el: clamp(t.el + S.frame.el, 0, 90) };
-      stopControl('Peaked.'); $('status').className = 'ok';
+      const { fits } = S.ctl.explain.scan;
+      const clean = fitsSettled(fits) && fits.el.center >= expectedDbm(l) - 8;
+      stopControl(clean ? 'Peaked.' : 'Stopped without a clean peak. The level is low or the fit did not settle.');
+      $('status').className = clean ? 'ok' : 'warn';
     } else if (S.ctl.phase === 'notfound') {
       const t = S.ctl.target();
       S.target = { az: wrap360(t.az + S.frame.az), el: clamp(t.el + S.frame.el, 0, 90) };
@@ -496,7 +506,9 @@ function render() {
   drawHistory($('history'), { samples: S.history, windowS, nowMs, showSat: S.reveal, hoverX: S.hoverX, cursorT });
   const level = 10 * Math.log10(S.trackEma);
   $('level').textContent = $('dockLevel').textContent = `${level.toFixed(1)} dBm`;
-  $('rCn').textContent = `${(level - d.trackNoiseDb).toFixed(1)} dB`;
+  // The reading is carrier plus noise, so remove the noise before forming the ratio.
+  const cn = 10 ** ((level - d.trackNoiseDb) / 10) - 1;
+  $('rCn').textContent = cn >= 1 ? `${(10 * Math.log10(cn)).toFixed(1)} dB` : 'not detected';
   $('rExpected').textContent = d.l.el > 0 ? `${d.expected.toFixed(1)} dBm` : 'below horizon';
   $('rAz').textContent = $('dockAz').textContent = `${S.az.toFixed(3)}°`;
   $('rEl').textContent = $('dockEl').textContent = `${S.el.toFixed(3)}°`;

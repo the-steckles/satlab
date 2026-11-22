@@ -176,3 +176,13 @@ test('step-track reports loss when the target leaves the beam', () => {
   for (let i = 0; i < 40; i++) t.update(NOISE + 10 * Math.log10(0.75 + 0.25 * -Math.log(1 - rng())));
   assert.equal(t.phase, 'lost');
 });
+
+test('auto-peak rejects noise across many runs', () => {
+  let found = 0;
+  for (let run = 0; run < 300; run++) {
+    const rng = seeded(1000 + run), c = createAutoPeak({ az: 10, el: 40, beamwidthDeg: HP, radiusDeg: HP * 5, noiseDbm: NOISE, dwell: 1 });
+    for (let i = 0; i < 4000 && !['notfound', 'done'].includes(c.phase); i++) c.update(NOISE + 10 * Math.log10(-Math.log(1 - rng())));
+    if (c.phase === 'done') found++;
+  }
+  assert.ok(found <= 3, `${found} of 300 noise-only runs reported a peak`);
+});

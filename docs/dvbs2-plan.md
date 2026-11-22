@@ -1,6 +1,6 @@
 # DVB-S2 signal overlay plan
 
-Status: plan only, for review before any code is written.
+Status: built in `dvbs2/` as its own page, showing the full chain through capture.
 
 ## Goal
 
@@ -10,7 +10,7 @@ Show why a DVB-S2 receiver degrades, loses lock, and can capture a stronger over
 
 - Use the fictional SatLab-1 transponder from Interference Lab.
 - Generate random symbols directly for each constellation. There is no real baseband framing, scrambling, LDPC or BCH encoder, and no transport stream.
-- Show two signals as a ratio (overlay-to-carrier, in dB), plus frequency, symbol-rate and timing offsets.
+- Show two signals as a ratio (overlay-to-carrier, in dB).
 - Represent the receiver as a state machine: searching, frame sync, carrier lock, FEC lock, degraded, lost, and locked to the other signal.
 - Drive state changes from published Es/N0 thresholds and a simple capture model, with its limits labeled.
 
@@ -26,7 +26,6 @@ Show why a DVB-S2 receiver degrades, loses lock, and can capture a stronger over
 1. Constellations, MER and MODCOD thresholds.
 2. What PLHEADER sync does, conceptually.
 3. An overlapping signal first acts like interference.
-4. Why matching symbol rate and frequency changes the receiver's behavior.
 5. Capture: the receiver follows the stronger signal.
 6. Defender's view: sudden changes in level, MER, service identifiers and carrier parameters.
 7. Mitigation and response: monitoring, authentication and encryption of content, carrier identification (CID), and reporting.
@@ -38,7 +37,8 @@ Show why a DVB-S2 receiver degrades, loses lock, and can capture a stronger over
 - Real satellites, services, power levels or link budgets for an overlay.
 - Procedures for finding or acquiring a real carrier.
 
-## Questions for review
+## Decisions
 
-- Should this be a third mode in Interference Lab or its own page?
-- How much of the capture behavior should be shown, given it needs to stay educational?
+- It is its own page.
+- It shows the full behavior: source video, modulation chain, reception, IQ, decoded video, loss of lock, and capture by the overlay's video.
+- The overlay is a single relative level. Frequency, symbol-rate and timing alignment are not modeled.

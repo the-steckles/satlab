@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { computeTrace, dopplerHz, fsplDb, noiseDbm, peakNear } from '../src/link.js';
-import { isGeostationary, look, makeSatrec, nextPass, subLongitude } from '../src/orbit.js';
+import { isGeostationary, look, makeSatrec, nextPass, orbitName, subLongitude } from '../src/orbit.js';
 
 const near = (a, b, tol) => assert.ok(Math.abs(a - b) <= tol, `${a} vs ${b}`);
 
@@ -54,4 +54,14 @@ test('next pass finds a LEO rise above the threshold', () => {
   assert.ok(rise);
   near(look(sat, station, rise).el, 5, 0.2);
   assert.ok(!isGeostationary(leoOmm));
+});
+
+test('a narrow RBW cannot hide a carrier between display bins', () => {
+  const t = computeTrace({ centerHz: 11.7e9, spanHz: 1e6, rbwHz: 10, bins: 801, noiseFloorDbm: -150, carriers: [{ freqHz: 11.7e9 + 417, dbm: -100 }], rng: () => 0.5 });
+  assert.ok(Math.max(...t) > -100.5);
+});
+
+test('an inclined geostationary satellite is named as inclined', () => {
+  assert.match(orbitName({ ...geoOmm, INCLINATION: 3.36 }), /Inclined GEO \(3\.36°\)/);
+  assert.equal(orbitName({ ...geoOmm, INCLINATION: 0.02 }), 'Geostationary');
 });

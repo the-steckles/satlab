@@ -1,11 +1,12 @@
+import { drawConstellation } from '../../lib/constellation.js';
 import { LESSONS } from './lessons.js';
-import { ANSWERS, CASES, DEFAULTS, evaluate, lockShare, MODCODS, OCCUPIED_MHZ, spectrum, VIEWS } from './model.js';
+import { ANSWERS, CASES, DEFAULTS, evaluate, iqSamples, lockShare, MODCODS, spectrum, VIEWS } from './model.js';
 import { createWaterfall, drawTrace } from './plots.js';
 
 const $ = (id) => document.getElementById(id);
 const BINS = 512, TOP_DB = 40, BOTTOM_DB = -40, FRAME_MS = 90;
 const fresh = () => ({ ...DEFAULTS, interferer: { ...DEFAULTS.interferer } });
-const S = { mode: 'learn', params: fresh(), view: 'A', lesson: 0, caseOrder: [], caseIndex: 0, answered: null, t: 0, paused: false, hoverX: null, last: 0, db: null, meta: null };
+const S = { mode: 'learn', params: fresh(), view: 'A', iqSite: 'A', lesson: 0, caseOrder: [], caseIndex: 0, answered: null, t: 0, paused: false, hoverX: null, last: 0, db: null, meta: null };
 const sign = (v, unit) => (Math.abs(v) < 0.05 ? `0.0 ${unit}` : `${v > 0 ? '+' : '−'}${Math.abs(v).toFixed(1)} ${unit}`);
 const num = (v, unit = 'dB') => (Number.isFinite(v) ? `${(Math.abs(v) < 0.05 ? 0 : v).toFixed(1).replace('-', '−')} ${unit}` : '–');
 let waterfall;
@@ -31,6 +32,7 @@ function buildSites() {
 function renderSites(r) {
   ROWS.forEach((row, i) => {
     const tr = $('sites').children[i];
+    tr.hidden = S.mode === 'diagnose' && row[0].endsWith('change'); // Tickets are read from the analyzer, not these rows.
     ['A', 'B'].forEach((site, n) => {
       const td = tr.children[n + 1];
       td.textContent = row[1](r.sites[site]);
@@ -44,35 +46,91 @@ function renderSites(r) {
 
 function syncControls() {
   const p = S.params, i = p.interferer;
-  for (const id of ['carrierMHz', 'iboDb', 'rainDb', 'mispointDb']) {
-    $(id).value = p[id];
-    $(`${id}Out`).textContent = id === 'carrierMHz' ? sign(p[id], 'MHz') : num(p[id]);
-  }
+  for (const id of ['carrierMHz', 'neighborMHz']) { $(id).value = p[id]; $(`${id}Out`).textContent = sign(p[id], 'MHz'); }
+  for (const id of ['iboDb', 'rainDb', 'mispointDb']) { $(id).value = p[id]; $(`${id}Out`).textContent = num(p[id]); }
+  for (const id of ['trimDb', 'neighborTrimDb']) { $(id).value = p[id]; $(`${id}Out`).textContent = sign(p[id], 'dB'); }
+  for (const id of ['rsMHz', 'neighborRsMHz']) { $(id).value = p[id]; $(`${id}Out`).textContent = `${p[id].toFixed(1)} Msym/s`; }
+  $('neighborOn').checked = p.neighborOn;
+  $('neighborWrap').hidden = !p.neighborOn;
+  $('alc').checked = p.alc;
   $('modcod').value = p.modcod;
   $('iOn').checked = i.on;
   $('iKind').value = i.kind;
   $('iPath').value = i.path;
   $('icDb').value = i.icDb; $('icDbOut').textContent = `${sign(i.icDb, 'dB')}`;
   $('offsetMHz').value = i.offsetMHz; $('offsetMHzOut').textContent = sign(i.offsetMHz, 'MHz');
-  $('bwMHz').value = i.bwMHz; $('bwMHzOut').textContent = `${i.bwMHz.toFixed(1)} MHz`;
-  $('offsetWrap').hidden = i.kind === 'barrage';
-  $('bwWrap').hidden = i.kind === 'cw' || i.kind === 'barrage';
+  for (const id of ['narrowMHz', 'bwMHz', 'wideMHz', 'spanMHz', 'sweepWidthMHz']) { $(id).value = i[id]; $(`${id}Out`).textContent = `${i[id].toFixed(1)} MHz`; }
+  if (i.sweepWidthMHz === 0) $('sweepWidthMHzOut').textContent = 'Tone (0 MHz)';
+  const rate = (i.sweepShape === 'saw' ? 1 : 2) * i.spanMHz / i.sweepS;
+  $('sweepS').value = i.sweepS; $('sweepSOut').textContent = `${i.sweepS.toFixed(1)} s, ${rate.toFixed(1)} MHz/s`;
+  $('sweepShape').value = i.sweepShape;
+  $('offsetName').textContent = i.kind === 'swept' ? 'Sweep center' : 'Center';
+  $('cwNote').hidden = i.kind !== 'cw';
+  $('narrowWrap').hidden = i.kind !== 'narrow';
+  $('bwWrap').hidden = i.kind !== 'partial';
+  $('wideWrap').hidden = i.kind !== 'barrage';
+  $('sweepWrap').hidden = i.kind !== 'swept';
   const diagnosing = S.mode === 'diagnose';
   $('interfererBox').hidden = diagnosing;
   $('conditionsBox').hidden = diagnosing;
+  $('powerBox').hidden = diagnosing;
+  $('txBox').hidden = S.mode !== 'sandbox';
+  $('iqSite').value = S.iqSite;
   $('iboDb').closest('label').hidden = diagnosing; // Its value would give away the overdrive case.
   for (const b of $('views').children) {
     const on = b.dataset.view === S.view;
     b.classList.toggle('active', on);
     b.setAttribute('aria-pressed', on);
   }
-  $('modeLearn').classList.toggle('active', !diagnosing);
-  $('modeDiagnose').classList.toggle('active', diagnosing);
-  $('modeLearn').setAttribute('aria-pressed', !diagnosing);
-  $('modeDiagnose').setAttribute('aria-pressed', diagnosing);
+  for (const [id, mode] of [['modeLearn', 'learn'], ['modeDiagnose', 'diagnose'], ['modeSandbox', 'sandbox']]) {
+    $(id).classList.toggle('active', S.mode === mode);
+    $(id).setAttribute('aria-pressed', S.mode === mode);
+  }
+}
+
+const SHARES = [['carrier', 'Your carrier', '#0f9c7e'], ['neighbor', 'Other carrier', '#5f7df0'], ['interference', 'Interference', '#d0559a'], ['noise', 'Uplink noise', '#6b7c88']];
+
+function renderPower(r) {
+  $('powerBar').replaceChildren(...SHARES.filter(([id]) => r.shares[id] > 0.002).map(([id, name, color]) => {
+    const bar = document.createElement('i');
+    bar.style.cssText = `flex:${r.shares[id]};background:${color}`;
+    bar.title = `${name}: ${(r.shares[id] * 100).toFixed(1)}%`;
+    return bar;
+  }));
+  $('powerBar').setAttribute('aria-label', SHARES.map(([id, name]) => `${name} ${Math.round(r.shares[id] * 100)}%`).join(', '));
+  $('powerLegend').replaceChildren(...SHARES.map(([id, name, color]) => {
+    const span = document.createElement('span'), dot = document.createElement('i');
+    dot.style.background = color;
+    span.append(dot, `${name} ${Math.round(r.shares[id] * 100)}%`);
+    return span;
+  }));
+  $('powerNote').textContent = r.params.alc
+    ? 'ALC is on: an attenuator holds the tube’s drive constant, so a stronger input turns every signal down together.'
+    : 'Fixed gain: the tube has a physical output limit. As it nears that limit, a stronger signal leaves less output for the others.';
+}
+
+function renderIq(r) {
+  const iq = iqSamples(r, S.iqSite);
+  drawConstellation($('iq'), { samples: iq.samples, ideal: iq.ideal, label: r.params.modcod });
+  const site = r.sites[S.iqSite];
+  $('iqNote').textContent = `Site ${S.iqSite}: MER ${num(iq.merDb)}, Es/N0 ${num(site.esn0)}, ${site.state}. White crosses are the ideal symbol positions.`;
 }
 
 function renderLesson(r) {
+  $('lessonText').setAttribute('aria-live', S.mode === 'sandbox' ? 'off' : 'polite'); // Sandbox text changes with every sweep frame.
+  if (S.mode === 'sandbox') {
+    const a = r.sites.A;
+    $('lessonHead').textContent = 'Sandbox';
+    $('lessonTitle').textContent = 'Build your own scenario';
+    $('lessonText').textContent = `Set up the transmit site, the second carrier and the interference, then watch the spectrum, IQ plot and site table respond. Your carrier needs ${num(r.need)} and has ${num(a.esn0)} at Site A, so its margin is ${num(a.margin)}.`;
+    $('lessonPos').textContent = '';
+    $('lessonBack').hidden = true;
+    $('lessonNext').hidden = true;
+    $('answers').hidden = true;
+    return;
+  }
+  $('lessonBack').hidden = false;
+  $('lessonNext').hidden = false;
   if (S.mode === 'learn') {
     const l = LESSONS[S.lesson];
     $('lessonHead').textContent = 'Guided experiment';
@@ -87,7 +145,7 @@ function renderLesson(r) {
   const c = CASES[S.caseOrder[S.caseIndex]];
   $('lessonHead').textContent = 'Diagnose it';
   $('lessonTitle').textContent = `Trouble ticket ${S.caseIndex + 1}`;
-  $('lessonText').textContent = S.answered ? `${S.answered === c.answer ? 'Correct.' : `Not quite. This was: ${ANSWERS[c.answer]}.`} ${c.why}` : 'A customer reports a problem. Compare the sites and check each test point, then choose the most likely cause.';
+  $('lessonText').textContent = S.answered ? `${S.answered === c.answer ? 'Correct.' : `Not quite. This was: ${ANSWERS[c.answer]}.`} ${c.why}` : 'A customer reports a problem. The table shows who is affected. Use the spectrum, waterfall and IQ plot at each test point to work out what it is, then choose the most likely cause.';
   $('lessonPos').textContent = `${S.caseIndex + 1} of ${CASES.length}`;
   $('lessonBack').disabled = S.caseIndex === 0;
   $('lessonNext').disabled = S.caseIndex === CASES.length - 1;
@@ -116,7 +174,8 @@ function drawFrame(addRow) {
 function paint() {
   if (!S.db) return;
   const p = S.params;
-  const carriers = [{ mhz: p.carrierMHz, width: OCCUPIED_MHZ, name: 'Yours', main: true }, { mhz: p.neighborMHz, width: OCCUPIED_MHZ, name: 'Other', main: false }];
+  const carriers = [{ mhz: p.carrierMHz, width: p.rsMHz * 1.2, name: 'Yours', main: true }];
+  if (p.neighborOn) carriers.push({ mhz: p.neighborMHz, width: p.neighborRsMHz * 1.2, name: 'Other', main: false });
   drawTrace($('spectrum'), { db: S.db, lowMHz: S.meta.lowMHz, highMHz: S.meta.highMHz, centerMHz: S.meta.centerMHz, topDb: TOP_DB, bottomDb: BOTTOM_DB, carriers, hoverX: S.hoverX });
   $('specTitle').textContent = `Spectrum at ${VIEWS[S.view].name}`;
 }
@@ -126,6 +185,8 @@ function render() {
   syncControls();
   renderSites(r);
   renderLesson(r);
+  renderPower(r);
+  renderIq(r);
 }
 
 function applyLesson(i) {
@@ -152,9 +213,20 @@ function applyCase(i) {
   drawFrame(false);
 }
 
+function applySandbox() {
+  S.params = fresh();
+  S.params.interferer.on = true;
+  S.view = 'A';
+  S.t = 0;
+  waterfall.clear();
+  render();
+  drawFrame(false);
+}
+
 function setMode(mode) {
   S.mode = mode;
   if (mode === 'learn') { applyLesson(S.lesson); return; }
+  if (mode === 'sandbox') { applySandbox(); return; }
   S.caseOrder = CASES.map((_, i) => i);
   for (let i = S.caseOrder.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -179,13 +251,18 @@ function wire() {
     b.addEventListener('click', () => { S.answered = id; render(); });
     return b;
   }));
-  for (const id of ['carrierMHz', 'iboDb', 'rainDb', 'mispointDb']) $(id).addEventListener('input', (e) => { S.params[id] = +e.target.value; render(); drawFrame(false); });
+  for (const id of ['carrierMHz', 'iboDb', 'rainDb', 'mispointDb', 'rsMHz', 'trimDb', 'neighborMHz', 'neighborRsMHz', 'neighborTrimDb']) $(id).addEventListener('input', (e) => { S.params[id] = +e.target.value; render(); drawFrame(false); });
   $('modcod').addEventListener('change', (e) => { S.params.modcod = e.target.value; render(); });
   const setI = (key, value) => { S.params.interferer[key] = value; render(); drawFrame(false); };
   $('iOn').addEventListener('change', (e) => setI('on', e.target.checked));
   $('iKind').addEventListener('change', (e) => setI('kind', e.target.value));
   $('iPath').addEventListener('change', (e) => setI('path', e.target.value));
-  for (const [id, key] of [['icDb', 'icDb'], ['offsetMHz', 'offsetMHz'], ['bwMHz', 'bwMHz']]) $(id).addEventListener('input', (e) => setI(key, +e.target.value));
+  for (const key of ['icDb', 'offsetMHz', 'narrowMHz', 'bwMHz', 'wideMHz', 'spanMHz', 'sweepWidthMHz', 'sweepS']) $(key).addEventListener('input', (e) => setI(key, +e.target.value));
+  $('sweepShape').addEventListener('change', (e) => setI('sweepShape', e.target.value));
+  for (const id of ['neighborOn', 'alc']) $(id).addEventListener('change', (e) => { S.params[id] = e.target.checked; render(); drawFrame(false); });
+  $('iqSite').addEventListener('change', (e) => { S.iqSite = e.target.value; render(); });
+  $('sandboxReset').addEventListener('click', applySandbox);
+  $('modeSandbox').addEventListener('click', () => setMode('sandbox'));
   $('modeLearn').addEventListener('click', () => setMode('learn'));
   $('modeDiagnose').addEventListener('click', () => setMode('diagnose'));
   $('lessonBack').addEventListener('click', () => (S.mode === 'learn' ? applyLesson(S.lesson - 1) : applyCase(S.caseIndex - 1)));
@@ -198,14 +275,19 @@ function wire() {
   const canvas = $('spectrum');
   for (const type of ['pointerdown', 'pointermove']) canvas.addEventListener(type, (e) => { S.hoverX = e.clientX - canvas.getBoundingClientRect().left; paint(); });
   canvas.addEventListener('pointerleave', () => { S.hoverX = null; paint(); });
-  window.addEventListener('resize', paint);
+  window.addEventListener('resize', () => { paint(); renderIq(evaluate(S.params, S.t)); });
 }
 
 function loop(now) {
   if (!S.paused && now - S.last >= FRAME_MS) {
     S.t += Math.min(0.25, (now - S.last) / 1000);
     S.last = now;
-    if (S.params.interferer.on && S.params.interferer.kind === 'swept') renderSites(evaluate(S.params, S.t));
+    const r = evaluate(S.params, S.t);
+    if (S.params.interferer.on && S.params.interferer.kind === 'swept') {
+      renderSites(r);
+      if (S.mode === 'sandbox') renderLesson(r);
+    }
+    renderIq(r);
     drawFrame(true);
   }
   requestAnimationFrame(loop);
