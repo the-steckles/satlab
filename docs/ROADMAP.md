@@ -11,9 +11,13 @@ Each tool sets up the next.
 | # | Tool | Status | Why here |
 |---|------|--------|----------|
 | 1 | Peaker | Live | Pointing, peaking, side lobes, auto-peak, step-track |
-| 2 | Mixers and intermodulation | Built on `overnight/simulators` | Creates the shared signal engine |
-| 3 | Link interference | Built on `overnight/simulators` | Reuses the amplifier model to explain saturation and power robbing |
-| 4 | DVB-S2 signal overlay | Built on `overnight/simulators`, see `dvbs2-plan.md` | Needs receiver-state modeling on top of the link model |
+| 2 | Mixer Lab | Live | Creates the shared signal engine |
+| 3 | Link Budget Lab | Built, awaiting release | Shows where Es/N0 comes from before anything disturbs it |
+| 4 | Interference Lab | Live, update awaiting release | Reuses the amplifier model to explain saturation and power robbing |
+| 5 | DVB-S2 Overlay Lab | Live, update awaiting release, see `dvbs2-plan.md` | Needs receiver-state modeling on top of the link model |
+| 6 | Field Troubleshooter | Built, awaiting release | Applies every earlier lab to a fault and a report |
+
+`lib/receiver.js` holds the one receiver lock rule that Interference, DVB-S2 and Troubleshooter share. Link Budget still imports Peaker's antenna and path-loss code directly. Move those into `lib/` if a third lab needs them.
 
 ## 2. Mixers and intermodulation
 
@@ -73,6 +77,6 @@ These tools teach how links fail and how operators defend them. They are simulat
 
 ## Other ideas
 
-- A landing-page learning path that links related lessons across tools.
 - Rain fade, polarization skew and adjacent-satellite interference in Peaker.
+- LO phase noise on the constellation, adaptive coding during a fade, and uplink power control.
 - A phone-friendly layout for every new simulator from the start, reusing Peaker's pinned dock approach.

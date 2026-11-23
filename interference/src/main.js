@@ -1,6 +1,6 @@
 import { drawConstellation } from '../../lib/constellation.js';
 import { LESSONS } from './lessons.js';
-import { ANSWERS, CASES, DEFAULTS, evaluate, iqSamples, lockShare, MODCODS, spectrum, usableShare, VIEWS } from './model.js';
+import { ANSWERS, CASES, DEFAULTS, EVIDENCE, evaluate, iqSamples, liveState, lockShare, MODCODS, spectrum, ticketSet, usableShare, VIEWS } from './model.js';
 import { throughputMbps } from '../../lib/modcods.js';
 import { createWaterfall, drawTrace } from './plots.js';
 import { mountSuite, parseLesson, writeLesson } from '../../lib/suite.js';
@@ -9,24 +9,28 @@ const suite = mountSuite('interference', { jumps: [['lessonBox', 'Lesson'], ['si
 const $ = (id) => document.getElementById(id);
 const BINS = 512, TOP_DB = 40, BOTTOM_DB = -40, FRAME_MS = 90;
 const fresh = () => ({ ...DEFAULTS, interferer: { ...DEFAULTS.interferer } });
-const S = { mode: 'learn', params: fresh(), view: 'A', iqSite: 'A', lesson: 0, caseOrder: [], caseIndex: 0, answered: null, t: 0, paused: false, hoverX: null, last: 0, db: null, meta: null };
+const S = { mode: 'learn', params: fresh(), view: 'A', iqSite: 'A', lesson: 0, caseOrder: [], caseIndex: 0, picked: null, answered: null, scores: new Map(), ticketSets: new Map(), answers: new Map(), t: 0, paused: false, hoverX: null, last: 0, db: null, meta: null };
 const sign = (v, unit) => (Math.abs(v) < 0.05 ? `0.0 ${unit}` : `${v > 0 ? '+' : '−'}${Math.abs(v).toFixed(1)} ${unit}`);
 const num = (v, unit = 'dB') => (Number.isFinite(v) ? `${(Math.abs(v) < 0.05 ? 0 : v).toFixed(1).replace('-', '−')} ${unit}` : '–');
 let waterfall;
 
+const stateClass = (state) => state.split(' ')[0]; // 'Demod locked, FEC failing' styles as Demod.
+
 const ROWS = [
-  ['Receiver', (s) => s.state, (s) => s.state],
-  ['Es/N0', (s) => num(s.esn0)],
-  ['Margin', (s) => num(s.margin)],
-  ['Beacon level', (s) => sign(s.beaconDeltaDb, 'dB')],
+  ['Receiver', (s, name, r) => liveState(r.params, name, S.t), (s, name, r) => stateClass(liveState(r.params, name, S.t))],
   // The fourth field marks rows that would give away a Diagnose ticket.
+  ['Es/N0', (s) => num(s.esn0), null, true],
+  ['Margin', (s) => num(s.margin), null, true],
+  ['Beacon level', (s) => sign(s.beaconDeltaDb, 'dB')],
+  ['On opposite pol', (s) => (s.oppositePolDb === null ? 'not seen' : sign(s.oppositePolDb, 'dB'))],
   ['Carrier change', (s) => sign(s.carrierDeltaDb, 'dB'), null, true],
-  ['Noise floor change', (s) => sign(s.floorDeltaDb, 'dB'), null, true],
+  ['Floor beside carrier', (s) => sign(s.floorDeltaDb, 'dB'), null, true],
+  ['In-carrier N+I', (s) => sign(s.inCarrierDeltaDb, 'dB'), null, true],
   ['C/N uplink', (s) => num(s.cnUp), null, true],
   ['C/N downlink', (s) => num(s.cnDown), null, true],
   ['C/IM', (s) => num(s.cim), null, true],
   ['C/I', (s) => num(s.iDb), null, true],
-  ['Other carrier', (s) => s.neighborState, (s) => s.neighborState],
+  ['Other carrier', (s) => s.neighborState, (s) => stateClass(s.neighborState)],
 ];
 
 function buildSites() {
@@ -41,16 +45,16 @@ function buildSites() {
 function renderSites(r) {
   ROWS.forEach((row, i) => {
     const tr = $('sites').children[i];
-    tr.hidden = S.mode === 'diagnose' && !!row[3]; // Tickets are read from the analyzer, not these rows.
+    tr.hidden = S.mode === 'diagnose' && !!row[3] && !S.answered; // Tickets are read from the analyzer until answered.
     ['A', 'B'].forEach((site, n) => {
       const td = tr.children[n + 1];
-      td.textContent = row[1](r.sites[site]);
-      td.className = row[2] ? row[2](r.sites[site]) : '';
+      td.textContent = row[1](r.sites[site], site, r);
+      td.className = row[2] ? row[2](r.sites[site], site, r) : '';
     });
   });
   const robbing = r.params.interferer.on && r.params.interferer.path === 'uplink' && r.robbedDb > 0.05 ? ` Interference is taking ${r.robbedDb.toFixed(1)} dB of output from each carrier.` : '';
   const swept = r.params.interferer.on && r.params.interferer.kind === 'swept' ? ` Above threshold ${Math.round(lockShare(r.params) * 100)}% of each sweep, usable about ${Math.round(usableShare(r.params) * 100)}% after relock time.` : '';
-  $('tpNote').textContent = `Transponder output is ${num(-r.outputDb)} below saturation.${S.mode === 'diagnose' ? '' : robbing + swept}`;
+  $('tpNote').textContent = S.mode === 'diagnose' && !S.answered ? 'Exact levels stay hidden until you answer. Read this one from the analyzer.' : `Transponder output is ${num(-r.outputDb)} below saturation.${S.mode === 'diagnose' ? '' : robbing + swept}`;
 }
 
 function syncControls() {
@@ -68,6 +72,8 @@ function syncControls() {
   $('iOn').checked = i.on;
   $('iKind').value = i.kind;
   $('iPath').value = i.path;
+  $('iSource').value = i.source;
+  $('iSourceWrap').hidden = S.mode !== 'sandbox';
   $('icDb').value = i.icDb; $('icDbOut').textContent = `${sign(i.icDb, 'dB')}`;
   $('offsetMHz').value = i.offsetMHz; $('offsetMHzOut').textContent = sign(i.offsetMHz, 'MHz');
   for (const id of ['narrowMHz', 'bwMHz', 'wideMHz', 'spanMHz', 'sweepWidthMHz']) { $(id).value = i[id]; $(`${id}Out`).textContent = `${i[id].toFixed(1)} MHz`; }
@@ -85,6 +91,7 @@ function syncControls() {
   $('interfererBox').hidden = diagnosing;
   $('conditionsBox').hidden = diagnosing;
   $('powerBox').hidden = diagnosing;
+  $('signatureBox').hidden = diagnosing; // It would hand over the ticket answers.
   $('txBox').hidden = S.mode !== 'sandbox';
   $('iqSite').value = S.iqSite;
   $('iboDb').closest('label').hidden = diagnosing; // Its value would give away the overdrive case.
@@ -124,7 +131,8 @@ function renderIq(r) {
   const iq = iqSamples(r, S.iqSite);
   drawConstellation($('iq'), { samples: iq.samples, ideal: iq.ideal, label: r.params.modcod });
   const site = r.sites[S.iqSite];
-  $('iqNote').textContent = `Site ${S.iqSite}: MER ${num(iq.merDb)}, Es/N0 ${num(site.esn0)}, ${site.state}. White crosses are the ideal symbol positions.`;
+  const readsHigh = iq.merDb > site.esn0 + 1 ? ' MER reads high on a poor signal, because each symbol is scored against its nearest point.' : '';
+  $('iqNote').textContent = S.mode === 'diagnose' && !S.answered ? `Site ${S.iqSite}: ${site.state}. White crosses are the ideal symbol positions.` : `Site ${S.iqSite}: MER ${num(iq.merDb)}, Es/N0 ${num(site.esn0)}, ${site.state}. White crosses are the ideal symbol positions.${readsHigh}`;
 }
 
 function renderLesson(r) {
@@ -138,6 +146,7 @@ function renderLesson(r) {
     $('lessonBack').hidden = true;
     $('lessonNext').hidden = true;
     $('answers').hidden = true;
+    $('evidence').hidden = true;
     suite.related(null, false);
     return;
   }
@@ -152,6 +161,7 @@ function renderLesson(r) {
     $('lessonBack').disabled = S.lesson === 0;
     $('lessonNext').disabled = S.lesson === LESSONS.length - 1;
     $('answers').hidden = true;
+    $('evidence').hidden = true;
     suite.related(l.see, S.lesson === LESSONS.length - 1);
     return;
   }
@@ -159,15 +169,19 @@ function renderLesson(r) {
   const c = CASES[S.caseOrder[S.caseIndex]];
   $('lessonHead').textContent = 'Diagnose it';
   $('lessonTitle').textContent = `Trouble ticket ${S.caseIndex + 1}`;
-  suite.text($('lessonText'), S.answered ? `${S.answered === c.answer ? 'Correct.' : `Not quite. This was: ${ANSWERS[c.answer]}.`} ${c.why}` : 'A customer reports a problem. The table shows who is affected. Use the spectrum, waterfall and IQ plot at each test point to work out what it is, then choose the most likely cause.');
-  $('lessonPos').textContent = `${S.caseIndex + 1} of ${CASES.length}`;
+  const right = S.answered && S.answered.cause === c.answer && S.answered.evidence === c.evidence;
+  suite.text($('lessonText'), S.answered ? `${right ? 'Correct, with the right evidence.' : `Not quite. This was ${ANSWERS[c.answer]}, shown by: ${EVIDENCE[c.evidence].toLowerCase()}.`} ${c.why}` : S.picked ? `You chose ${ANSWERS[S.picked]}. What did you see that shows it?` : 'A customer reports a problem. The table shows who is affected. Use the spectrum, waterfall and IQ plot at each test point to work out what it is, choose the most likely cause, then choose your evidence.');
+  const scored = [...S.scores.values()];
+  const score = `${scored.filter(Boolean).length} of ${CASES.length}`;
+  $('lessonPos').textContent = scored.length === CASES.length ? `Set complete: ${score}` : `${S.caseIndex + 1} of ${CASES.length}, score ${scored.filter(Boolean).length}/${scored.length}`;
   $('lessonBack').disabled = S.caseIndex === 0;
   $('lessonNext').disabled = S.caseIndex === CASES.length - 1;
-  $('answers').hidden = false;
+  $('answers').hidden = !!S.picked && !S.answered;
+  $('evidence').hidden = !S.picked || !!S.answered;
   for (const b of $('answers').children) {
     b.disabled = !!S.answered;
     b.classList.toggle('right', !!S.answered && b.dataset.answer === c.answer);
-    b.classList.toggle('wrong', !!S.answered && b.dataset.answer === S.answered && S.answered !== c.answer);
+    b.classList.toggle('wrong', !!S.answered && b.dataset.answer === S.answered.cause && S.answered.cause !== c.answer);
   }
 }
 
@@ -218,9 +232,13 @@ function applyLesson(i) {
 
 function applyCase(i) {
   S.caseIndex = i;
-  S.answered = null;
+  // Going back shows the same ticket and answer, so the score always matches what is on screen.
+  S.answered = S.answers.get(i) ?? null;
+  S.picked = S.answered?.cause ?? null;
   const c = CASES[S.caseOrder[i]], base = fresh();
-  S.params = { ...base, ...c.set, interferer: { ...base.interferer, ...c.set.interferer } };
+  if (!S.ticketSets.has(i)) S.ticketSets.set(i, ticketSet(c));
+  const set = S.ticketSets.get(i);
+  S.params = { ...base, ...set, interferer: { ...base.interferer, ...set.interferer } };
   S.view = 'A';
   S.t = 0;
   waterfall.clear();
@@ -242,6 +260,9 @@ function setMode(mode) {
   S.mode = mode;
   if (mode === 'learn') { applyLesson(S.lesson); return; }
   if (mode === 'sandbox') { applySandbox(); return; }
+  S.scores = new Map();
+  S.ticketSets = new Map();
+  S.answers = new Map();
   S.caseOrder = CASES.map((_, i) => i);
   for (let i = S.caseOrder.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -264,7 +285,19 @@ function wire() {
     const b = document.createElement('button');
     b.dataset.answer = id;
     b.textContent = text;
-    b.addEventListener('click', () => { S.answered = id; render(); });
+    b.addEventListener('click', () => { S.picked = id; render(); });
+    return b;
+  }));
+  $('evidence').append(...Object.entries(EVIDENCE).map(([id, text]) => {
+    const b = document.createElement('button');
+    b.textContent = text;
+    b.addEventListener('click', () => {
+      const c = CASES[S.caseOrder[S.caseIndex]];
+      S.answered = { cause: S.picked, evidence: id };
+      S.answers.set(S.caseIndex, S.answered);
+      if (!S.scores.has(S.caseIndex)) S.scores.set(S.caseIndex, S.picked === c.answer && id === c.evidence);
+      render();
+    });
     return b;
   }));
   for (const id of ['carrierMHz', 'iboDb', 'rainDb', 'mispointDb', 'rsMHz', 'trimDb', 'neighborMHz', 'neighborRsMHz', 'neighborTrimDb']) $(id).addEventListener('input', (e) => { S.params[id] = +e.target.value; render(); drawFrame(false); });
@@ -273,6 +306,7 @@ function wire() {
   $('iOn').addEventListener('change', (e) => setI('on', e.target.checked));
   $('iKind').addEventListener('change', (e) => setI('kind', e.target.value));
   $('iPath').addEventListener('change', (e) => setI('path', e.target.value));
+  $('iSource').addEventListener('change', (e) => setI('source', e.target.value));
   for (const key of ['icDb', 'offsetMHz', 'narrowMHz', 'bwMHz', 'wideMHz', 'spanMHz', 'sweepWidthMHz', 'sweepS']) $(key).addEventListener('input', (e) => setI(key, +e.target.value));
   $('sweepShape').addEventListener('change', (e) => setI('sweepShape', e.target.value));
   for (const id of ['neighborOn', 'alc']) $(id).addEventListener('change', (e) => { S.params[id] = e.target.checked; render(); drawFrame(false); });

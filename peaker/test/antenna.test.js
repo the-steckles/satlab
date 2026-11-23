@@ -55,3 +55,10 @@ test('off-axis angle handles azimuth wrap and elevation compression', () => {
   assert.ok(Math.abs(offAxisDeg(359.5, 0, 0.5, 0) - 1) < 1e-6);
   assert.ok(Math.abs(offAxisDeg(10, 60, 11, 60) - 0.5) < 0.001);
 });
+
+test('the first side lobe sits past the main beam and well below the peak', async () => {
+  const { firstSideLobe, beamwidthDeg } = await import('../src/antenna.js');
+  const s = firstSideLobe(2.4, 12e9), beam = beamwidthDeg(2.4, 12e9);
+  assert.ok(s.offDeg > beam && s.offDeg < beam * 2.5, `at ${s.offDeg}`);
+  assert.ok(s.relDb < -15 && s.relDb > -35, `level ${s.relDb}`);
+});

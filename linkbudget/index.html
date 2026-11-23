@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Link Budget Lab</title>
+<meta name="description" content="Follow a satellite carrier from the HPA to the demodulator and see where its Es/N0 comes from." />
+<link rel="icon" href="data:," />
+<style>
+  :root { --bg:#0d1319; --panel:#141c24; --line:#26333e; --text:#dbe5ea; --muted:#8fa3b0; --accent:#4fe0c0; --warn:#e8a33d; --bad:#ff7a6b; color-scheme:dark; }
+  * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.4 system-ui, "Segoe UI", sans-serif; }
+  header { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; padding:10px 16px; border-bottom:1px solid var(--line); }
+  h1 { font-size:18px; margin:0; }
+  header span { color:var(--muted); font-size:12px; }
+  .home { font-size:13px; text-decoration:none; }
+  a { color:var(--accent); }
+  main { display:grid; grid-template-columns:280px minmax(0,1fr) 370px; gap:10px; padding:10px; align-items:start; }
+  .col, #controls { display:flex; flex-direction:column; gap:10px; min-width:0; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:10px; }
+  h2 { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:0 0 8px; }
+  label { display:block; color:var(--muted); font-size:12px; margin-bottom:7px; }
+  input, select, button { width:100%; margin-top:2px; padding:6px 7px; background:#0d1319; color:var(--text); border:1px solid var(--line); border-radius:4px; font:inherit; }
+  input[type=range] { padding:0; accent-color:var(--accent); }
+  button { cursor:pointer; background:#1b2732; }
+  @media (hover:hover) { button:hover { border-color:var(--accent); } }
+  button:disabled { opacity:.4; cursor:default; }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  output { float:right; color:var(--text); font:12px ui-monospace, Consolas, monospace; }
+  canvas { display:block; width:100%; border-radius:3px; }
+  #ladder { height:320px; }
+  #backoff { height:270px; }
+  .legend { display:flex; flex-wrap:wrap; gap:3px 12px; margin-top:6px; font-size:11px; color:var(--muted); }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:-1px; }
+  table { width:100%; border-collapse:collapse; font:12px ui-monospace, Consolas, monospace; }
+  td { padding:3px 4px; border-bottom:1px solid #1c2730; color:var(--muted); }
+  td:last-child { text-align:right; color:var(--text); white-space:nowrap; font-variant-numeric:tabular-nums; }
+  tr.strong td { color:var(--text); font-weight:600; }
+  dl { display:grid; grid-template-columns:1fr auto; gap:3px 10px; margin:0; font:12px ui-monospace, Consolas, monospace; }
+  dt { color:var(--muted); } dd { margin:0; text-align:right; font-variant-numeric:tabular-nums; }
+  .good { color:var(--accent); } .warn { color:var(--warn); } .bad { color:var(--bad); font-weight:600; }
+  #rState { font-size:16px; font-weight:600; margin:0 0 6px; }
+  #lessonTitle { font-size:15px; margin:0 0 4px; }
+  #lessonText { margin:0 0 8px; font-size:13px; min-height:150px; }
+  .lessonNav { display:flex; align-items:center; gap:6px; }
+  .lessonNav button { width:auto; margin:0; }
+  #lessonPos { flex:1; text-align:center; color:var(--muted); font-size:12px; }
+  .note { font-size:12px; color:var(--muted); margin:6px 0 0; }
+  @media (max-width:1180px) {
+    main { grid-template-columns:minmax(0,1fr); padding:10px 16px; }
+    .col { display:contents; }
+    .col > * { order:4; min-width:0; }
+    #lessonBox { order:1; } #resultBox { order:2; } #ladderBox { order:3; } #backoffBox { order:3; }
+    select { font-size:16px; }
+    button { min-height:40px; }
+  }
+</style>
+</head>
+<body>
+<header><a href="/" class="home">SatLab</a><h1>Link Budget Lab</h1><span>Where your Es/N0 comes from, from HPA to demodulator</span></header>
+<main>
+  <div class="col">
+    <div id="controls"></div>
+    <button id="reset">Reset this step</button>
+    <p class="note">SatLab-1 is fictional. Antenna, atmosphere and transponder values are typical, not from a specific product or satellite.</p>
+  </div>
+  <div class="col">
+    <section id="ladderBox">
+      <h2>Level through the link</h2>
+      <canvas id="ladder" role="img" aria-label="Carrier level at each stage from the HPA to the receiver, compared with the noise"></canvas>
+      <div class="legend"><span><i style="background:#0f9c7e"></i>Carrier</span><span><i style="background:#d0559a"></i>Noise at the receiver</span></div>
+    </section>
+    <section id="backoffBox">
+      <h2>Choosing a backoff</h2>
+      <canvas id="backoff" role="img" aria-label="Uplink, downlink, intermodulation and total Es/N0 against input backoff"></canvas>
+      <div class="legend"><span><i style="background:#5f7df0"></i>Uplink</span><span><i style="background:#c9780f"></i>Downlink</span><span><i style="background:#d0559a"></i>Intermodulation or distortion</span><span><i style="background:#dbe5ea"></i>Total Es/N0</span><span>Dashed: this link</span></div>
+      <p class="note" id="backoffNote"></p>
+    </section>
+    <section>
+      <h2>The budget</h2>
+      <table><tbody id="table"></tbody></table>
+    </section>
+  </div>
+  <div class="col">
+    <section id="lessonBox">
+      <h2>Guided walkthrough</h2>
+      <h3 id="lessonTitle"></h3>
+      <p id="lessonText" aria-live="polite"></p>
+      <div class="lessonNav">
+        <button id="lessonBack">Back</button>
+        <span id="lessonPos"></span>
+        <button id="lessonNext">Next</button>
+      </div>
+    </section>
+    <section id="resultBox">
+      <h2>Result</h2>
+      <p id="rState"></p>
+      <dl>
+        <dt>Es/N0</dt><dd id="rEs">–</dd>
+        <dt>Needed</dt><dd id="rNeed">–</dd>
+        <dt>Margin</dt><dd id="rMargin">–</dd>
+        <dt>C/N0</dt><dd id="rCn0">–</dd>
+        <dt>C/N, occupied bandwidth</dt><dd id="rCn">–</dd>
+        <dt>Eb/N0</dt><dd id="rEb">–</dd>
+        <dt>Expected MER</dt><dd id="rMer">–</dd>
+        <dt>Throughput</dt><dd id="rRate">–</dd>
+        <dt>Largest noise source</dt><dd id="rLimit">–</dd>
+        <dt>Fastest MODCOD with 1 dB spare</dt><dd id="rBest">–</dd>
+        <dt>Downlink rain it survives</dt><dd id="rRain">–</dd>
+        <dt>Pointing error for 1 dB loss</dt><dd id="rPoint">–</dd>
+      </dl>
+    </section>
+  </div>
+</main>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

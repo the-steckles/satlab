@@ -58,7 +58,7 @@ export function createDecoder(canvas) {
   return (video, t) => {
     const w = canvas.width, h = canvas.height;
     if (video.mode === 'frozen' && hasFrame) { corrupt(ctx, w, h, 0.06); return; }
-    if (video.mode === 'none' || video.mode === 'frozen') { message(ctx, w, h, 'NO SIGNAL', '#0a0f14'); hasFrame = false; return; }
+    if (video.mode === 'none' || video.mode === 'frozen') { message(ctx, w, h, video.mode === 'frozen' ? 'NO DECODED STREAM' : 'NO SIGNAL LOCK', '#0a0f14'); hasFrame = false; return; }
     if (video.mode === 'blocked') { message(ctx, w, h, 'BLOCKED: NOT AUTHENTIC', '#3a1f1d'); hasFrame = false; return; }
     drawSource(ctx, w, h, video.mode, t);
     if (video.errors > 0) corrupt(ctx, w, h, video.errors);

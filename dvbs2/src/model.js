@@ -2,18 +2,19 @@
 // the video is drawn locally. There is deliberately no bitstream, encoder, IQ export or transmit path.
 import { constellation, gaussian, merDb } from '../../lib/constellation.js';
 import { MODCODS, RELOCK_STEPS } from '../../lib/modcods.js';
+import { DEMOD_ACQUIRE_DB, DEMOD_HOLD_DB, MARGINAL_DB, RECEIVER_NAMES } from '../../lib/receiver.js';
 import { twtaOutput } from '../../lib/twta.js';
 
-export { MODCODS };
+export { DEMOD_ACQUIRE_DB, DEMOD_HOLD_DB, MODCODS };
 export const DEFAULTS = { cnDb: 16, modcod: '8PSK 2/3', overlayOn: true, ratioDb: -25, authOn: false };
 export const STATES = {
-  locked: 'Locked', degraded: 'Marginal', fecFail: 'Demod locked, FEC failing', lost: 'Lost', searching: 'Searching',
+  locked: RECEIVER_NAMES.locked, degraded: RECEIVER_NAMES.marginal, fecFail: RECEIVER_NAMES.fecFail, lost: RECEIVER_NAMES.lost, searching: 'Searching',
   frameSync: 'Frame sync', carrierLock: 'Carrier lock', fecLock: 'FEC lock',
 };
 
 const SECONDS = { lost: 0.7, ...RELOCK_STEPS };
-export const ACQUIRE_DB = 1.5; // Illustrative: a receiver needs a little more signal to acquire than to hold lock.
-const DEMOD_BELOW_DB = 3; // Illustrative: carrier and frame tracking outlast the FEC by a few dB.
+export const NORMAL_MER_DB = DEFAULTS.cnDb; // A fixed commissioning baseline, so a fade cannot lower its own reference.
+const MER_ALARM_DB = 3; // Illustrative: operators alarm on a sustained drop from the carrier's normal MER.
 const TRACKING = new Set(['carrierLock', 'fecLock', 'locked', 'degraded', 'fecFail']);
 const DECODING = new Set(['fecLock', 'locked', 'degraded']);
 const lin = (db) => 10 ** (db / 10);
@@ -37,29 +38,34 @@ export const createReceiver = () => ({ state: 'locked', source: 'carrier', timer
 export function stepReceiver(rx, p, dt) {
   const l = levels(p), es = (source) => (source === 'overlay' ? l.overlayEs : l.carrierEs);
   const timer = rx.timer + dt, to = (state, source = rx.source) => ({ state, source, timer: 0 });
-  const margin = rx.source ? es(rx.source) - l.need : -Infinity;
+  const signal = rx.source ? es(rx.source) : -Infinity, margin = signal - l.need;
   switch (rx.state) {
     case 'locked':
-    case 'degraded': {
+    case 'degraded':
       if (margin < 0) return to('fecFail');
-      return { ...rx, state: margin < 1 ? 'degraded' : 'locked', timer };
-    }
+      return { ...rx, state: margin < MARGINAL_DB ? 'degraded' : 'locked', timer };
     case 'fecFail':
+      if (signal < DEMOD_HOLD_DB) return to('lost');
       if (margin >= 0) return to('degraded');
-      return margin < -DEMOD_BELOW_DB ? to('lost') : { ...rx, timer };
+      // Stuck on an undecodable signal while the other one could decode, so search again.
+      if (rx.source && es(rx.source === 'overlay' ? 'carrier' : 'overlay') >= Math.max(signal, l.need)) return to('searching', null);
+      return { ...rx, timer };
     case 'lost':
-      if (margin >= 0) return to('degraded');
+      if (signal >= DEMOD_ACQUIRE_DB) return to('fecFail');
       return timer >= SECONDS.lost ? to('searching', null) : { ...rx, timer };
     case 'searching': {
       if (timer < SECONDS.searching) return { ...rx, timer };
       const best = l.overlayEs > l.carrierEs ? 'overlay' : 'carrier';
-      return es(best) >= l.need + ACQUIRE_DB ? to('frameSync', best) : { ...rx, timer: 0 };
+      return es(best) >= DEMOD_ACQUIRE_DB ? to('frameSync', best) : { ...rx, timer: 0 };
     }
-    default: {
-      if (margin < 0) return to('searching', null);
+    case 'fecLock':
+      if (margin < 0) return to('fecFail');
+      return timer < SECONDS.fecLock ? { ...rx, timer } : to('locked');
+    default: // frameSync and carrierLock depend only on the PLHEADER, so a payload FEC cannot block them.
+      if (signal < DEMOD_HOLD_DB) return to('searching', null);
       if (timer < SECONDS[rx.state]) return { ...rx, timer };
-      return to({ frameSync: 'carrierLock', carrierLock: 'fecLock', fecLock: 'locked' }[rx.state]);
-    }
+      if (rx.state === 'frameSync') return to('carrierLock');
+      return to(margin >= 0 ? 'fecLock' : 'fecFail');
   }
 }
 
@@ -71,6 +77,8 @@ export function settle(p, peakDb = p.ratioDb) {
   for (let i = 0; i < 16; i++) rx = stepReceiver(rx, p, 0.5);
   return rx;
 }
+
+export const isDecoding = (rx) => DECODING.has(rx.state);
 
 // What the screen shows for this receiver state.
 export function videoState(rx, p) {
@@ -97,14 +105,14 @@ export function iqSamples(p, rx, count = 1100, rand = Math.random) {
       const spin = 2 * Math.PI * rand(), c = Math.cos(spin), d = Math.sin(spin);
       [i, q] = [i * c - q * d, i * d + q * c];
     }
-    samples.push({ i, q, refI: s.i, refQ: s.q });
+    samples.push({ i, q });
   }
-  return { samples, ideal, tracking, merDb: tracking ? merDb(samples) : null };
+  return { samples, ideal, tracking, merDb: tracking ? merDb(samples, ideal) : null };
 }
 
-// What a monitoring position would flag.
-export function monitor(p, rx) {
-  const l = levels(p), onOverlay = rx.source === 'overlay', decoding = DECODING.has(rx.state);
+// What a monitoring position can know. The true source stays out of this, because it is simulator knowledge.
+export function monitor(p, rx, measuredMer = null, baselineDb = NORMAL_MER_DB) {
+  const l = levels(p), onOverlay = rx.source === 'overlay', decoding = isDecoding(rx);
   const margin = rx.source ? (onOverlay ? l.overlayEs : l.carrierEs) - l.need : -Infinity;
   return {
     levelRiseDb: l.totalDb,
@@ -115,6 +123,7 @@ export function monitor(p, rx) {
     idAlarm: decoding && onOverlay,
     authResult: !p.authOn ? 'off' : !decoding ? 'waiting' : onOverlay ? 'FAILED' : 'verified',
     serviceAlarm: !decoding,
-    lowMargin: decoding && margin < 1,
+    lowMargin: decoding && margin < MARGINAL_DB,
+    merAlarm: measuredMer !== null && measuredMer < baselineDb - MER_ALARM_DB,
   };
 }

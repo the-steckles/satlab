@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { imageMHz, isInverted, loForProduct, noiseFloorDbm, runScene, SCENES, summarize, sweep, wantedMHz, filterEdges, filterLossAtDb, filterSettings, amplifierBackoff, noiseShape } from '../src/model.js';
+import { imageMHz, isInverted, loForProduct, noiseFloorDbm, runScene, SCENES, summarize, sweep, wantedMHz, filterEdges, filterLossAtDb, filterSettings, amplifierBackoff, noiseProfile } from '../src/model.js';
 
 const near = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, `${msg ?? ''} expected ${b} ± ${tol}, got ${a}`);
 const last = (r) => r.nodes.at(-1);
@@ -212,8 +212,18 @@ test('uneven tones make the inversion visible', () => {
 });
 
 test('filters shape the noise floor directly after them', () => {
-  const r = runScene('bench', { filtersOn: true }), shape = noiseShape(r, 2);
-  assert.ok(Math.abs(shape(300)) < 0.01);
-  assert.ok(shape(3700) < -40);
-  assert.equal(noiseShape(r, 1)(3700), 0);
+  const r = runScene('groundDown', {}), after = noiseProfile(r, 2, 1e5), before = noiseProfile(r, 1, 1e5);
+  assert.ok(after.at(12500) > after.at(9000) + 10);
+  assert.equal(before.at(12500), before.at(9000));
+});
+
+test('a detuned filter still shows the noise in its own passband', () => {
+  const r = runScene('groundDown', { filters: { imageFilter: { centerMHz: 9000 } } });
+  const n = noiseProfile(r, r.scene.stages.findIndex((s) => s.id === 'imageFilter') + 1, 1e5);
+  assert.ok(n.at(9000) > n.at(12500) + 40, `${n.at(9000)} vs ${n.at(12500)}`);
+});
+
+test('output backoff stays non-negative when the TWTA is overdriven', () => {
+  const b = amplifierBackoff(runScene('satTx', { rfDbm: -10 }), 'twta');
+  assert.ok(b.iboDb < 0 && b.oboDb >= 0, `IBO ${b.iboDb}, OBO ${b.oboDb}`);
 });

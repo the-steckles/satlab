@@ -25,8 +25,42 @@ test('a weak overlay only degrades, and the picture survives', () => {
 test('equal power breaks both signals', () => {
   const p = at(0), l = levels(p), rx = settle(p);
   assert.ok(l.carrierEs < l.need && l.overlayEs < l.need);
-  assert.equal(rx.source, null);
-  assert.equal(videoState(rx, p).mode, 'none');
+  assert.equal(rx.state, 'fecFail');
+  assert.equal(videoState(rx, p).mode, 'frozen');
+});
+
+test('demod limits do not depend on the MODCOD', () => {
+  for (const modcod of Object.keys(MODCODS)) {
+    assert.equal(stepReceiver({ state: 'fecFail', source: 'carrier', timer: 0 }, at(-30, { modcod, cnDb: -2 }), 0.1).state, 'fecFail', modcod);
+    assert.equal(stepReceiver({ state: 'fecFail', source: 'carrier', timer: 0 }, at(-30, { modcod, cnDb: -4 }), 0.1).state, 'lost', modcod);
+  }
+});
+
+test('a fade raises the MER alarm against a fixed baseline', () => {
+  const p = at(-30, { overlayOn: false, cnDb: 9 });
+  assert.equal(monitor(p, settle(p), 10).merAlarm, true);
+});
+
+test('a receiver stuck on an undecodable signal moves to one that can decode', () => {
+  const p = at(2.8, { modcod: 'QPSK 1/2', cnDb: 24 });
+  const rx = run({ state: 'fecFail', source: 'carrier', timer: 0 }, p, 5);
+  assert.equal(rx.source, 'overlay');
+  assert.notEqual(rx.state, 'fecFail');
+});
+
+test('a searching receiver can stop at demod lock with FEC failing', () => {
+  const p = at(-30, { cnDb: 3 });
+  let rx = { state: 'searching', source: null, timer: 0 };
+  rx = run(rx, p, 4);
+  assert.equal(rx.state, 'fecFail');
+  assert.equal(rx.source, 'carrier');
+});
+
+test('MER is decision-directed and raises an alarm when it falls', () => {
+  const p = at(-6.5), rx = run(settle(at(-20)), p, 2), iq = iqSamples(p, rx, 3000);
+  assert.ok(iq.merDb > levels(p).carrierEs, 'nearest-point MER reads high below threshold');
+  assert.equal(monitor(p, rx, 9).merAlarm, true);
+  assert.equal(monitor(p, rx, 15.5).merAlarm, false);
 });
 
 test('the full ramp goes carrier, lost, then captured with a clean picture', () => {
@@ -44,17 +78,23 @@ test('the full ramp goes carrier, lost, then captured with a clean picture', () 
 });
 
 test('capture has hysteresis', () => {
-  const p = at(7.5), captured = settle(at(12));
+  const p = at(-2.5), captured = settle(at(12));
   assert.equal(captured.source, 'overlay');
-  assert.equal(run(captured, p, 3).source, 'overlay');
+  assert.equal(run(captured, p, 3).source, 'overlay', 'demod keeps following a signal it could not acquire');
   assert.equal(settle(p, 12).source, 'overlay');
-  assert.equal(settle(p).source, null, 'the same level does not acquire from below');
+  assert.equal(settle(p).source, 'carrier', 'a receiver that never captured stays on the carrier');
+});
+
+test('FEC has no memory: the same signal decodes however it was reached', () => {
+  const p = at(-8);
+  assert.equal(run(settle(at(-5)), p, 6).state, run(settle(at(-20)), p, 6).state);
+  assert.notEqual(run(settle(at(-5)), p, 6).state, 'fecFail');
 });
 
 test('IQ error is large at equal power and recovers after capture', () => {
   const clean = iqSamples(at(-30), settle(at(-30)), 4000);
   const captured = iqSamples(at(12), settle(at(12)), 4000);
-  const lost = iqSamples(at(0), settle(at(0)), 4000);
+  const lost = iqSamples(at(0), { state: 'searching', source: null, timer: 0 }, 4000);
   assert.equal(lost.merDb, null);
   assert.equal(lost.tracking, false);
   assert.ok(clean.merDb > 13);
@@ -72,7 +112,7 @@ test('authentication blocks captured content but cannot prevent RF capture', () 
 test('a more robust MODCOD survives a stronger overlay', () => {
   assert.equal(settle(at(-3, { modcod: 'QPSK 1/2' })).source, 'carrier');
   assert.ok(MODCODS['QPSK 1/2'] < levels(at(-3, { modcod: 'QPSK 1/2' })).carrierEs);
-  assert.notEqual(settle(at(-3)).source, 'carrier');
+  assert.equal(settle(at(-3)).state, 'fecFail');
 });
 
 test('just below threshold the demodulator holds while FEC fails', () => {

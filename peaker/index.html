@@ -38,6 +38,7 @@
   #specWrap { flex:3; } #wfWrap { flex:2; }
   canvas { display:block; width:100%; flex:1; min-height:0; border-radius:3px; }
   #patternPlot { height:190px; flex:none; }
+  #motionPlot { height:220px; flex:none; }
   .plots section.plotbar { display:grid; flex:none; grid-template-columns:repeat(5,minmax(0,1fr)) auto; gap:8px; align-items:end; }
   .plotbar label { margin:0; }
   .plotbar button { width:auto; }
@@ -205,7 +206,7 @@
       <h2>Beacon level</h2>
       <div class="big" id="level" aria-live="off">–</div>
       <dl class="readout">
-        <dt>C/N in 3 kHz</dt><dd id="rCn">–</dd><dt>Expected on-axis</dt><dd id="rExpected">–</dd><dt>Fixed dish would read</dt><dd id="rFixed">–</dd>
+        <dt>C/N in 3 kHz</dt><dd id="rCn">–</dd><dt>Expected on-axis</dt><dd id="rExpected">–</dd><dt>Fixed dish would read</dt><dd id="rFixed">–</dd><dt>Lobe check</dt><dd id="rLobe">–</dd>
       </dl>
     </section>
     <section>
@@ -231,6 +232,7 @@
         <button id="mispoint">New mispoint</button>
         <button id="goPredicted">Go to predicted</button>
       </div>
+      <button id="goSideLobe" style="margin-top:8px">Go to a side lobe</button>
       <label style="margin-top:8px"><input id="program" type="checkbox" />Program track (follow orbit)</label>
       <label>Simulation speed<select id="timeRate"><option value="1">Real time</option><option value="60">60×</option><option value="600">600×</option></select></label>
       <p class="note">Arrow keys and the buttons follow the selected jog mode.</p>
@@ -249,6 +251,12 @@
       <p id="cycleNote" class="note" style="margin:0"></p>
       <p id="status" role="status" style="margin-top:8px"></p>
       <p id="nextCycle" class="note"></p>
+    </section>
+    <section id="motionBox">
+      <h2>Daily satellite motion</h2>
+      <canvas id="motionPlot" role="img" aria-label="The satellite's path across the sky over 24 hours, with the antenna beam drawn at its current pointing"></canvas>
+      <p class="note"><span style="color:#4fe0c0">●</span> Satellite now. Circle: your 3 dB beam.</p>
+      <p class="note" id="motionText"></p>
     </section>
     <section>
       <h2>Antenna pattern</h2>

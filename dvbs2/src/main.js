@@ -1,14 +1,14 @@
 import { drawConstellation } from '../../lib/constellation.js';
 import { COLORS as C, prepare, ticks, verticalLabel } from '../../lib/plot.js';
 import { LESSONS, rampCaption } from './lessons.js';
-import { ACQUIRE_DB, createReceiver, DEFAULTS, iqSamples, levels, MODCODS, monitor, settle, STATES, stepReceiver, videoState } from './model.js';
+import { createReceiver, DEFAULTS, DEMOD_ACQUIRE_DB, iqSamples, isDecoding, levels, MODCODS, monitor, NORMAL_MER_DB, settle, STATES, stepReceiver, videoState } from './model.js';
 import { createDecoder, drawSource } from './video.js';
 import { mountSuite, parseLesson, writeLesson } from '../../lib/suite.js';
 
 const suite = mountSuite('dvbs2', { jumps: [['lessonBox', 'Lesson'], ['videoRow', 'Video'], ['controlBox', 'Controls']], action: { id: 'ramp', label: 'Ramp' } });
 const $ = (id) => document.getElementById(id);
 const FRAME_MS = 80, HISTORY_S = 40, RAMP_DB_PER_S = 1.5, RAMP_TOP_DB = 12, RAMP_BOTTOM_DB = -25;
-const S = { p: { ...DEFAULTS }, rx: createReceiver(), lesson: 0, block: 'demod', t: 0, last: 0, paused: false, ramping: false, rampDir: 1, rampView: false, lastMer: null, shownState: '', history: [] };
+const S = { merBase: NORMAL_MER_DB, p: { ...DEFAULTS }, rx: createReceiver(), lesson: 0, block: 'demod', t: 0, last: 0, paused: false, ramping: false, rampDir: 1, rampView: false, lastMer: null, shownState: '', history: [] };
 const num = (v, unit = 'dB') => (Number.isFinite(v) ? `${v.toFixed(1).replace('-', '−')} ${unit}` : '–');
 
 const BLOCKS = [
@@ -31,7 +31,7 @@ const BLOCKS = [
 function blockHealth(id, zone) {
   const { state, source } = S.rx, onOverlay = source === 'overlay';
   if (zone !== 'rx' || id === 'lnb') return '';
-  if (id === 'demod') return ['searching', 'lost'].includes(state) ? 'bad' : state === 'frameSync' ? 'warn' : onOverlay ? 'taken' : 'ok';
+  if (id === 'demod') return ['searching', 'lost'].includes(state) ? 'bad' : state === 'frameSync' ? 'warn' : onOverlay && isDecoding(S.rx) ? 'taken' : 'ok'; // The source is unknown before FEC locks.
   if (id === 'decoder') return ['searching', 'lost', 'frameSync', 'carrierLock', 'fecFail'].includes(state) ? 'bad' : state === 'degraded' || state === 'fecLock' ? 'warn' : onOverlay ? 'taken' : 'ok';
   const video = videoState(S.rx, S.p);
   if (video.mode === 'blocked') return id === 'demux' ? 'bad' : 'bad';
@@ -53,7 +53,7 @@ function renderChain() {
 
 function drawHistory() {
   const { ctx, w, h } = prepare($('history'));
-  const m = { l: 42, r: 10, t: 8, b: 26 }, pw = w - m.l - m.r, ph = h - m.t - m.b, top = 20, bottom = -20;
+  const m = { l: 42, r: 10, t: 8, b: 26 }, pw = w - m.l - m.r, ph = h - m.t - m.b, top = 30, bottom = -20;
   const X = (t) => m.l + (1 - (S.t - t) / HISTORY_S) * pw, Y = (v) => m.t + ((top - Math.min(top, v)) / (top - bottom)) * ph;
   ctx.strokeStyle = C.grid;
   ctx.fillStyle = C.axis;
@@ -66,11 +66,14 @@ function drawHistory() {
   verticalLabel(ctx, 'Es/(N+I) (dB)', 10, m.t + ph / 2);
   ctx.save();
   ctx.beginPath(); ctx.rect(m.l, m.t, pw, ph); ctx.clip();
-  const need = levels(S.p).need;
-  ctx.strokeStyle = C.marker; ctx.setLineDash([4, 4]);
-  ctx.beginPath(); ctx.moveTo(m.l, Y(need)); ctx.lineTo(m.l + pw, Y(need)); ctx.stroke();
+  // Thresholds are drawn from history, so a MODCOD change does not rewrite the past.
+  ctx.strokeStyle = C.marker;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  S.history.forEach((row, k) => { if (k) ctx.lineTo(X(row.t), Y(row.need)); else ctx.moveTo(X(row.t), Y(row.need)); });
+  ctx.stroke();
   ctx.setLineDash([1, 3]);
-  ctx.beginPath(); ctx.moveTo(m.l, Y(need + ACQUIRE_DB)); ctx.lineTo(m.l + pw, Y(need + ACQUIRE_DB)); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(m.l, Y(DEMOD_ACQUIRE_DB)); ctx.lineTo(m.l + pw, Y(DEMOD_ACQUIRE_DB)); ctx.stroke();
   ctx.setLineDash([]);
   ctx.lineWidth = 2;
   for (const [key, color] of [['mer', '#8fa3b0'], ['carrier', '#0f9c7e'], ['overlay', '#d0559a']]) {
@@ -89,14 +92,17 @@ function drawHistory() {
 }
 
 function renderStatus() {
-  const l = levels(S.p), m = monitor(S.p, S.rx), iq = iqSamples(S.p, S.rx);
-  drawConstellation($('iq'), { samples: iq.samples, ideal: iq.ideal, color: S.rx.source === 'overlay' ? '#e27ab5' : '#4fe0c0', label: iq.tracking ? `following ${S.rx.source === 'overlay' ? 'overlay' : 'carrier'}` : 'no phase lock' });
+  const l = levels(S.p), iq = iqSamples(S.p, S.rx), m = monitor(S.p, S.rx, iq.merDb, S.merBase), decoded = isDecoding(S.rx), onOverlay = S.rx.source === 'overlay';
+  // Before FEC locks, a real receiver cannot tell whose signal it is tracking.
+  const identity = !iq.tracking ? 'None' : !decoded ? 'Unknown signal' : onOverlay ? 'Unexpected service' : 'Expected service';
+  drawConstellation($('iq'), { samples: iq.samples, ideal: iq.ideal, color: decoded && onOverlay ? '#e27ab5' : '#4fe0c0', label: iq.tracking ? `tracking: ${identity.toLowerCase()}` : 'no phase lock' });
   $('rxState').textContent = STATES[S.rx.state];
   $('rxState').dataset.health = S.rx.state === 'locked' ? (S.rx.source === 'overlay' ? 'taken' : 'ok') : S.rx.state === 'degraded' || S.rx.state === 'fecLock' ? 'warn' : 'bad';
-  $('rxSource').textContent = S.rx.source === null ? 'None' : S.rx.source === 'overlay' ? 'Overlay' : 'Carrier';
+  $('rxSource').textContent = identity;
+  $('trueSource').textContent = S.rx.source === null ? 'None' : onOverlay ? 'Overlay' : 'Carrier';
   S.lastMer = iq.merDb;
   $('mer').textContent = num(iq.merDb);
-  $('monMer').textContent = iq.merDb === null ? 'no lock' : `${num(iq.merDb)} (normal ${num(S.p.cnDb)})`;
+  $('monMer').textContent = iq.merDb === null ? 'no lock' : `${num(iq.merDb)} (normal ${num(S.merBase)})`;
   $('monCarrier').textContent = `${m.carrierChangeDb > -0.05 ? '0.0' : num(m.carrierChangeDb, '').trim()} dB`;
   $('esCarrier').textContent = num(l.carrierEs);
   $('esOverlay').textContent = S.p.overlayOn ? num(l.overlayEs) : '–';
@@ -107,6 +113,7 @@ function renderStatus() {
   const quietOutage = l.totalDb < 1 ? ` Total level moved only +${l.totalDb.toFixed(1)} dB, so a level alarm alone would miss this.` : '';
   $('monAlert').textContent = m.idAlarm ? 'Alarm: the received service does not match. Escalate to the satellite operator.'
     : m.serviceAlarm ? `Alarm: service is down, with no decoded stream.${quietOutage}`
+    : m.merAlarm ? `Warning: MER is more than 3 dB below normal.${quietOutage}`
     : m.levelAlarm ? 'Warning: total level in the channel is above its normal value.'
     : m.lowMargin ? 'Warning: under 1 dB of margin.' : 'Normal.';
 }
@@ -119,7 +126,7 @@ function renderLesson() {
   $('lessonPos').textContent = `${S.lesson + 1} of ${LESSONS.length}`;
   $('lessonBack').disabled = S.lesson === 0;
   $('lessonNext').disabled = S.lesson === LESSONS.length - 1;
-  suite.related(S.rampView ? null : lesson.see, false);
+  suite.related(S.rampView ? null : lesson.see, !S.rampView && S.lesson === LESSONS.length - 1);
 }
 
 function syncControls() {
@@ -164,6 +171,9 @@ function applyLesson(index) {
   S.ramping = false;
   S.rampView = false;
   for (let i = 0; i <= index; i++) Object.assign(S.p, LESSONS[i].set);
+  // A step that needs its own MODCOD borrows it, and the learner's choice comes back afterward.
+  if (S.kept && !LESSONS[index].only) { Object.assign(S.p, S.kept); S.kept = null; }
+  if (LESSONS[index].only) { S.kept ??= { modcod: S.p.modcod, cnDb: S.p.cnDb }; Object.assign(S.p, LESSONS[index].only); }
   S.rx = settle(S.p, LESSONS[index].peakDb);
   renderAll();
 }
@@ -205,14 +215,15 @@ function wire() {
   }
   $('modcod').append(...Object.entries(MODCODS).map(([name, v]) => new Option(`${name} (${v.toFixed(1)} dB)`, name)));
   $('ratioDb').addEventListener('input', (e) => { S.ramping = false; S.rampView = false; S.p.ratioDb = +e.target.value; settingChanged(); });
-  $('cnDb').addEventListener('input', (e) => { S.p.cnDb = +e.target.value; settingChanged(); });
-  $('modcod').addEventListener('change', (e) => { S.p.modcod = e.target.value; settingChanged(); });
+  // Normal MER is the best this link has shown, so a later fade cannot lower its own reference.
+  $('cnDb').addEventListener('input', (e) => { S.p.cnDb = +e.target.value; S.merBase = Math.max(S.merBase, S.p.cnDb); if (S.kept) S.kept.cnDb = S.p.cnDb; settingChanged(); });
+  $('modcod').addEventListener('change', (e) => { S.p.modcod = e.target.value; if (S.kept) S.kept.modcod = S.p.modcod; settingChanged(); });
   $('overlayOn').addEventListener('change', (e) => { S.p.overlayOn = e.target.checked; S.ramping = false; settingChanged(); });
   $('authOn').addEventListener('change', (e) => { S.p.authOn = e.target.checked; settingChanged(); });
   $('ramp').addEventListener('click', () => startRamp(1));
   $('rampDown').addEventListener('click', () => startRamp(-1));
   $('pause').addEventListener('click', () => { S.paused = !S.paused; syncControls(); });
-  $('restart').addEventListener('click', () => { S.history = []; S.p = { ...DEFAULTS }; applyLesson(0); });
+  $('restart').addEventListener('click', () => { S.kept = null; S.merBase = NORMAL_MER_DB; S.history = []; S.p = { ...DEFAULTS }; applyLesson(0); });
   $('lessonBack').addEventListener('click', () => applyLesson(S.lesson - 1));
   $('lessonNext').addEventListener('click', () => applyLesson(S.lesson + 1));
   window.addEventListener('resize', () => { drawHistory(); renderStatus(); });
@@ -231,7 +242,7 @@ function loop(now) {
       S.rx = stepReceiver(S.rx, S.p, dt);
       if (`${S.rx.state}/${S.rx.source}` !== S.shownState) renderLesson();
       const l = levels(S.p);
-      S.history.push({ t: S.t, carrier: l.carrierEs, overlay: l.overlayEs, mer: S.lastMer });
+      S.history.push({ t: S.t, carrier: l.carrierEs, overlay: l.overlayEs, mer: S.lastMer, need: l.need });
       while (S.history.length && S.history[0].t < S.t - HISTORY_S) S.history.shift();
       syncControls();
       renderChain();

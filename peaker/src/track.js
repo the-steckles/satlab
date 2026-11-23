@@ -36,6 +36,15 @@ export function spiralPoints(radiusDeg, spacingDeg) {
   return pts;
 }
 
+// Time acceleration runs the controller in simulated time. Each analyzer sweep contains several control ticks,
+// capped so a fast simulation does not run the orbit model thousands of times per second.
+export const MAX_CONTROL_TICKS = 40;
+export function controlTicks(rate, sweepS) {
+  const ticks = Math.min(MAX_CONTROL_TICKS, Math.ceil(rate));
+  return { ticks, tickS: (rate * sweepS) / ticks };
+}
+export const dwellTicks = (dwellS, tickS) => Math.max(1, Math.round(dwellS / tickS));
+
 // Every reading is kept so a run can be paused and stepped through afterward.
 const MAX_RECORDS = 2000;
 const pushRecord = (records, r) => {

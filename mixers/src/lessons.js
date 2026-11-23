@@ -3,7 +3,7 @@ import { amplifierBackoff } from './model.js';
 
 const db = (v) => (v === null || v === undefined || !Number.isFinite(v) ? '–' : `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(1)}`);
 const mhz = (v) => `${+v.toFixed(3)} MHz`;
-const backoffText = (r) => { const b = amplifierBackoff(r, 'twta'); return `The TWTA is at ${b.iboDb.toFixed(1).replace('-', '−')} dB input backoff and ${b.oboDb.toFixed(1).replace('-', '−')} dB output backoff`; };
+const backoffText = (r) => { const b = amplifierBackoff(r, 'twta'); return `The TWTA is ${b.iboDb < 0 ? `driven ${(-b.iboDb).toFixed(1)} dB past saturation` : `at ${b.iboDb.toFixed(1)} dB input backoff`} and ${b.oboDb.toFixed(1)} dB output backoff`; };
 
 export const LESSONS = {
   bench: [
@@ -48,8 +48,12 @@ export const LESSONS = {
       text: ({ r, s, node }) => `Every device has a limit on how much power it can deliver. Near that limit, more input yields less additional output. This is compression, and P1dB is the point where gain has dropped 1 dB. Pushed further, output stops rising at all. That is saturation. At ${db(r.params.rfDbm)} dBm in, an ideal mixer would output ${db(r.params.rfDbm + node.gainDb)} dBm, but this one gives ${db(s.carrier?.dbm)} dBm. The flattening curve on the output plot shows it. The same limit creates the third-order products you just measured.`,
     },
     {
-      title: 'High-side LO flips the spectrum', set: { twoTone: true, unevenTones: true, loMHz: 2300, rfDbm: -20 }, span: 'near',
-      see: { href: '/dvbs2/', text: 'See where a receiver depends on this: DVB-S2 Overlay Lab' },
+      title: 'Two tones compress sooner', set: { twoTone: true, rfDbm: -5 }, span: 'near',
+      text: ({ slope }) => `Two tones add and subtract as they drift in and out of phase, so their combined peaks reach the device’s limit earlier than one steady tone. ${slope?.p1dB && slope?.p1dBTwoTone ? `Here P1dB is ${db(slope.p1dB.pin)} dBm with one tone and ${db(slope.p1dBTwoTone.pin)} dBm per tone with two, ${(slope.p1dB.pin - slope.p1dBTwoTone.pin).toFixed(1)} dB lower. The total input at that point is ${db(slope.p1dBTwoTone.pin + 3)} dBm.` : slope ? 'This test point has no compression to measure. Click the last test point to see both markers.' : 'The slope plot marks both compression points once it finishes measuring.'} For a device with a cubic limit, the per-tone figure sits about 4.8 dB below the one-tone P1dB.`,
+    },
+    {
+      title: 'High-side LO flips the spectrum', set: { twoTone: true, unevenTones: true, loMHz: 2300, product: 'loMinusRf', rfDbm: -20 }, span: 'near',
+      see: { href: '/troubleshoot/?lesson=5', text: 'Practice this fault: Field Troubleshooter' },
       text: ({ r, s }) => `With the LO above the RF, IF = LO − RF, so a higher RF gives a lower IF. F2 is now 6 dB weaker to make this visible. At the input the strong tone is on the left, and at the output it is on the right, at ${mhz((s.carrier?.hz ?? 0) / 1e6)}. Click the first and last test points to compare them. Modems need to know this, because inverted carriers will not lock without the matching setting.`,
     },
   ],
@@ -78,10 +82,10 @@ export const LESSONS = {
     },
     {
       title: 'Image on the satellite', set: { filtersOn: false, imageOn: true, imageDbm: -80 }, span: 'near',
-      text: ({ r, s, node }) => `Energy near ${mhz(r.imageMHz)} reaches the same channel through Image + LO, here at ${db(s.imageDbc)} dBc. With no image filter, the LNA’s amplified noise at that frequency also converts onto your carrier, so the noise figure is now ${node.nfDb.toFixed(2)} dB.`,
+      text: ({ r, s, node }) => `Energy near ${mhz(r.imageMHz)} reaches the same channel through Image + LO, here at ${db(s.imageDbc)} dBc. With the filters out, the LNA’s amplified noise at that frequency also converts onto your carrier, so the noise figure is now ${node.nfDb.toFixed(2)} dB.`,
     },
     {
-      title: 'Input filter restored', set: { filtersOn: true, imageOn: true, imageDbm: -80 }, span: 'near',
+      title: 'Filters restored', set: { filtersOn: true, imageOn: true, imageDbm: -80 }, span: 'near',
       text: ({ s, node }) => `With the filters in, the image contribution ${s.imageDbc === null ? 'falls below anything this model tracks' : `drops to ${db(s.imageDbc)} dBc`} and the noise figure recovers to ${node.nfDb.toFixed(2)} dB. The image filter sits after the LNA because a filter before it could not remove the noise the LNA adds itself.`,
     },
     {
@@ -96,12 +100,12 @@ export const LESSONS = {
     },
     {
       title: 'Operating with backoff', set: {}, span: 'near',
-      text: ({ r, s }) => `Backoff means deliberately running below saturation. Input backoff (IBO) measures it at the tube’s input, and output backoff (OBO) at its output. ${backoffText(r)}. The amplifier is more linear there, so it adds less distortion. Each tone leaves at ${db(s.carrier?.dbm)} dBm, and third-order products are ${db(s.im3Dbc)} dBc.`,
+      text: ({ r, s }) => `Backoff means deliberately running below saturation. Input backoff (IBO) measures it at the tube’s input, and output backoff (OBO) at its output. ${backoffText(r)}. ${amplifierBackoff(r, 'twta').iboDb > 3 ? 'The amplifier is more linear there, so it adds less distortion.' : 'At this drive it has little or no backoff left, so distortion is high.'} Each tone leaves at ${db(s.carrier?.dbm)} dBm, and third-order products are ${db(s.im3Dbc)} dBc. Both this scene and later labs use typical tube models rather than measured ones, and across normal backoff they can differ by up to about 7 dB in C/IM and 1.4 dB in OBO.`,
     },
     {
       title: 'Into saturation', set: { rfDbm: -35 }, span: 'near',
       see: { href: '/interference/?lesson=11', text: 'See what this does to shared carriers: Power robbing' },
-      text: ({ r, s }) => `Adding 17 dB of drive gives far less than 17 dB more output, because the tube is running out of beam power. ${backoffText(r)}, so it is at its ceiling. Each tone is now ${db(s.carrier?.dbm)} dBm, and third-order products have climbed to ${db(s.im3Dbc)} dBc. This is why multi-carrier transponders run with backoff.`,
+      text: ({ r, s }) => `${amplifierBackoff(r, 'twta').iboDb > 3 ? `${backoffText(r)}, so at this level it is below its ceiling. Each tone is ${db(s.carrier?.dbm)} dBm, and third-order products are ${db(s.im3Dbc)} dBc.` : `Adding 17 dB of drive gives far less than 17 dB more output, because the tube is running out of beam power. ${backoffText(r)}, so it is at its ceiling. Each tone is now ${db(s.carrier?.dbm)} dBm, and third-order products have climbed to ${db(s.im3Dbc)} dBc.`} This is why multi-carrier transponders run with backoff. Both this scene and later labs use typical tube models rather than measured ones, and across normal backoff they can differ by up to about 7 dB in C/IM and 1.4 dB in OBO.`,
     },
     {
       title: 'Backing off', set: { rfDbm: -62 }, span: 'near',
@@ -122,8 +126,8 @@ export const LESSONS = {
       text: ({ s }) => `With the filter back between the LNA and mixer, the image falls to ${db(s.imageDbc)} dBc. A filter after the mixer could not do this, because by then the image and the carrier share one frequency.`,
     },
     {
-      title: 'A high-side LNB', set: { twoTone: true, unevenTones: true, imageOn: false, loMHz: 14250, product: 'loMinusRf' }, span: 'near',
-      text: ({ r, s }) => `An LNB can also place its LO above the band. LO − RF puts the carrier at ${mhz(r.wantedMHz)}, at ${db(s.carrier?.dbm)} dBm. The image has moved to ${mhz(r.imageMHz)}, and the IF is inverted, so the modem’s spectral inversion setting has to change.`,
+      title: 'A high-side C-band LNB', set: { twoTone: true, unevenTones: true, imageOn: false, rfMHz: 3950, loMHz: 5150, product: 'loMinusRf', filters: { imageFilter: { centerMHz: 3950, bwMHz: 1000 } } }, span: 'near',
+      text: ({ r, s }) => `A common C-band LNB places its ${mhz(r.params.loMHz)} LO above the 3.7 to 4.2 GHz band. LO − RF puts a ${mhz(r.params.rfMHz)} carrier at ${mhz(r.wantedMHz)}, at ${db(s.carrier?.dbm)} dBm. The image is now at ${mhz(r.imageMHz)}, above the LO, and the IF is inverted, so the modem’s spectral sense has to match.`,
     },
   ],
 };

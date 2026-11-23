@@ -62,17 +62,23 @@ Completed on 2026-11-22. Model changes are covered by automated tests, and each 
 
 Known simplifications: TWTA AM/PM is not modeled, the tube curve and C/IM are typical values, and receiver acquisition times and margins are illustrative.
 
-### Pass 3: questions to answer
+### Pass 3
 
-1. What is the difference between C/N, Es/N0, Eb/N0 and MER, and which should I trust?
-2. Where does my Es/N0 come from, end to end (EIRP, path loss, G/T)?
-3. How do I know I am on the main lobe, and how close to peak is good enough?
-4. Why does a geostationary satellite move, and when do I need step-track?
-5. What backoff should I run, and how do I know I am overdriven?
-6. How do I tell CW, modulated, cross-pol, adjacent-satellite and local faults apart?
-7. Why did service die when the level barely moved?
-8. What does "demod locked, FEC failing" mean?
-9. My carrier will not lock: is it inversion, frequency offset, symbol rate or level?
-10. Who do I call first, and what goes in an interference report?
+Completed on 2026-11-22. Model changes are covered by automated tests and each page was exercised in a browser. It has not been re-reviewed or checked on real hardware or phones.
+
+| # | Question | Where it is answered | Status |
+|---|---|---|---|
+| 1 | What is the difference between C/N, Es/N0, Eb/N0 and MER, and which should I trust? | Link Budget Lab | done |
+| 2 | Where does my Es/N0 come from, end to end (EIRP, path loss, G/T)? | Link Budget Lab | done |
+| 3 | How do I know I am on the main lobe, and how close to peak is good enough? | Peaker side-lobe button and lobe check, tolerance in Link Budget Lab | done |
+| 4 | Why does a geostationary satellite move, and when do I need step-track? | Peaker daily motion plot and tracking advice | done |
+| 5 | What backoff should I run, and how do I know I am overdriven? | Link Budget Lab | done |
+| 6 | How do I tell CW, modulated, cross-pol, adjacent-satellite and local faults apart? | Interference Lab field guide, lessons and tickets | done |
+| 7 | Why did service die when the level barely moved? | DVB-S2 lesson | done |
+| 8 | What does "demod locked, FEC failing" mean? | DVB-S2 lesson and Field Troubleshooter ticket | done |
+| 9 | My carrier will not lock: is it inversion, frequency offset, symbol rate or level? | Field Troubleshooter | done |
+| 10 | Who do I call first, and what goes in an interference report? | Field Troubleshooter report builder | done |
+
+Step-track and auto-peak now run in simulated time, so they keep working at Peaker's faster simulation speeds.
 
 Each lab report also lists its own ranked questions.

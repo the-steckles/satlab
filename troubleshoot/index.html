@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Field Troubleshooter</title>
+<meta name="description" content="Practice finding why a carrier will not lock, and write a clear satellite interference report." />
+<link rel="icon" href="data:," />
+<style>
+  :root { --bg:#0d1319; --panel:#141c24; --line:#26333e; --text:#dbe5ea; --muted:#8fa3b0; --accent:#4fe0c0; --warn:#e8a33d; --bad:#ff7a6b; color-scheme:dark; }
+  * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.4 system-ui, "Segoe UI", sans-serif; }
+  header { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; padding:10px 16px; border-bottom:1px solid var(--line); }
+  h1 { font-size:18px; margin:0; }
+  header span { color:var(--muted); font-size:12px; }
+  .home { font-size:13px; text-decoration:none; }
+  a { color:var(--accent); }
+  nav[aria-label=Mode] { display:flex; flex-wrap:wrap; gap:6px; padding:8px 16px; border-bottom:1px solid var(--line); }
+  nav[aria-label=Mode] button { width:auto; margin:0; }
+  .view { display:grid; grid-template-columns:280px minmax(0,1fr) 370px; gap:10px; padding:10px; align-items:start; }
+  .col { display:flex; flex-direction:column; gap:10px; min-width:0; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:10px; }
+  h2 { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:0 0 8px; }
+  label { display:block; color:var(--muted); font-size:12px; margin-bottom:7px; }
+  input, select, button { width:100%; margin-top:2px; padding:6px 7px; background:#0d1319; color:var(--text); border:1px solid var(--line); border-radius:4px; font:inherit; }
+  input[type=checkbox] { width:auto; margin:0 6px 0 0; vertical-align:middle; }
+  button { cursor:pointer; background:#1b2732; }
+  @media (hover:hover) { button:hover { border-color:var(--accent); } }
+  button.active { background:var(--accent); color:#06231d; border-color:var(--accent); font-weight:600; }
+  button:disabled { opacity:.4; cursor:default; }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  canvas { display:block; width:100%; border-radius:3px; }
+  #spectrum { height:330px; }
+  dl { display:grid; grid-template-columns:1fr auto; gap:3px 10px; margin:0; font:12px ui-monospace, Consolas, monospace; }
+  dt { color:var(--muted); } dd { margin:0; text-align:right; font-variant-numeric:tabular-nums; }
+  .good { color:var(--accent); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+  #modemState { font-size:17px; font-weight:600; margin:0 0 8px; }
+  #lessonTitle { font-size:15px; margin:0 0 4px; }
+  #lessonText { margin:0 0 8px; font-size:13px; min-height:120px; }
+  .lessonNav { display:flex; align-items:center; gap:6px; }
+  .lessonNav button { width:auto; margin:0; }
+  #lessonPos { flex:1; text-align:center; color:var(--muted); font-size:12px; }
+  .list { margin:0 0 8px; padding-left:18px; font-size:12px; color:var(--muted); }
+  .list li { margin-bottom:6px; }
+  .list b { color:var(--text); font-weight:600; }
+  .list li.fail { color:var(--text); background:#3a1f1d; outline:1px solid var(--bad); border-radius:3px; padding:2px 4px; }
+  .note { font-size:12px; color:var(--muted); margin:6px 0 0; }
+  .legend { display:flex; flex-wrap:wrap; gap:3px 12px; margin-top:6px; font-size:11px; color:var(--muted); }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:-1px; }
+  #reportView { grid-template-columns:minmax(0,1fr) minmax(0,1fr) 340px; }
+  #reportText { margin:0; padding:8px; min-height:320px; max-width:100%; overflow-x:auto; white-space:pre-wrap; overflow-wrap:anywhere; background:#0a0f14; border-radius:3px; font:12px/1.5 ui-monospace, Consolas, monospace; }
+  .buttons { display:flex; gap:6px; margin-top:8px; }
+  .buttons button { margin:0; }
+  @media (max-width:1180px) {
+    .view, #reportView { grid-template-columns:minmax(0,1fr); padding:10px 16px; }
+    #modemView .col { display:contents; }
+    #modemView .col > * { order:4; min-width:0; }
+    #lessonBox { order:1 !important; } #specBox { order:2 !important; } #modemBox { order:3 !important; }
+    input:not([type=checkbox]), select { font-size:16px; }
+    button { min-height:40px; }
+  }
+</style>
+</head>
+<body>
+<header><a href="/" class="home">SatLab</a><h1>Field Troubleshooter</h1><span>Find why a carrier will not lock, then report interference clearly</span></header>
+<nav aria-label="Mode"><button id="modeModem">Carrier won’t lock</button><button id="modeReport">Interference report</button></nav>
+<main>
+  <div class="view" id="modemView">
+    <div class="col">
+      <section id="modemBox">
+        <h2>Modem</h2>
+        <p id="modemState" role="status"></p>
+        <label><input id="lnbPower" type="checkbox" />LNB power on</label>
+        <label>Receive frequency (L-band MHz)<input id="freqMHz" type="number" min="900" max="2200" step="any" /></label>
+        <label>Symbol rate (Msym/s)<input id="rsMsps" type="number" min="0.1" max="60" step="any" /></label>
+        <label><input id="inverted" type="checkbox" />Spectrum inverted</label>
+        <label>Your diagnosis, before you fix it: which check failed first?<select id="diagnosis"></select></label>
+        <h2 style="margin-top:10px">Request to the transmit side</h2>
+        <p class="note" style="margin:0 0 6px">A DVB-S2 receiver detects the MODCOD from the PLHEADER. Only the transmit side can change it.</p>
+        <label>Ask for MODCOD<select id="requestModcod"></select></label>
+        <button id="sendRequest" style="margin-bottom:7px">Send request</button>
+        <button id="restart">Restart this ticket</button>
+      </section>
+      <section>
+        <h2>Site record</h2>
+        <dl><dt>Carrier RF</dt><dd id="sRf">–</dd><dt>LNB LO</dt><dd id="sLo">–</dd></dl>
+        <p class="note">You configure frequency, symbol rate, LNB supply and spectral sense when it is not automatic. Some links also need a stream or scrambling setting. The receiver detects MODCOD, frame size and pilots.</p>
+      </section>
+      <p class="note">A simplified modem with fictional sites. Search ranges and thresholds are illustrative and vary by model.</p>
+    </div>
+    <div class="col">
+      <section id="specBox">
+        <h2>Analyzer on the receive line</h2>
+        <canvas id="spectrum" role="img" aria-label="Spectrum of the receive line, with the band the modem is searching marked"></canvas>
+        <div class="legend"><span><i style="background:#4fe0c0"></i>Received signal</span><span><i style="background:#5f7df0"></i>Where the modem is searching</span></div>
+        <p class="note">Teaching view with automatic span. On a real line that carries LNB power, put a DC block before the analyzer. Also confirm the satellite, polarization, any 10 MHz reference and the carrier identity, because a modem can lock to the wrong carrier.</p>
+      </section>
+      <section>
+        <h2>What you can measure</h2>
+        <dl>
+          <dt>Carrier center</dt><dd id="mCenter">–</dd>
+          <dt>−3 dB width</dt><dd id="mWidth">–</dd>
+          <dt>Total carrier power</dt><dd id="mLevel">–</dd>
+          <dt>Es/N0</dt><dd id="mEs">–</dd>
+          <dt>Detected MODCOD</dt><dd id="mModcod">–</dd>
+          <dt>Ideal threshold</dt><dd id="mNeed">–</dd>
+        </dl>
+      </section>
+    </div>
+    <div class="col">
+      <section id="lessonBox">
+        <h2>Trouble ticket</h2>
+        <h3 id="lessonTitle"></h3>
+        <p id="lessonText" aria-live="polite"></p>
+        <div class="lessonNav">
+          <button id="lessonBack">Back</button>
+          <span id="lessonPos"></span>
+          <button id="lessonNext">Next</button>
+        </div>
+      </section>
+      <section id="checkBox">
+        <h2>Work the checks in this order</h2>
+        <ol class="list" id="checks"></ol>
+        <button id="hint"></button>
+      </section>
+    </div>
+  </div>
+
+  <div class="view" id="reportView" hidden>
+    <section>
+      <h2>Report details</h2>
+      <div id="reportFields"></div>
+      <div class="buttons"><button id="useNow">Started just now</button><button id="fillExample">Fill fictional example</button><button id="clearReport">Clear</button></div>
+      <p class="note">What you type stays in this browser tab. It is not saved or sent anywhere.</p>
+    </section>
+    <section>
+      <h2>Report</h2>
+      <pre id="reportText"></pre>
+      <p class="note" id="reportMissing"></p>
+      <div class="buttons"><button id="copyReport">Copy report</button></div>
+      <p class="note" id="copyNote" role="status"></p>
+    </section>
+    <section>
+      <h2>Who to call, in order</h2>
+      <ol class="list" id="escalation"></ol>
+    </section>
+  </div>
+</main>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

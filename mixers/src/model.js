@@ -209,25 +209,30 @@ export function runScene(sceneId, params) {
   return { scene, params: p, nodes, sources: grid.sources, wantedMHz: wantedMHz(scene, p), imageMHz: scene.noLo ? null : imageMHz(p), inverted: isInverted(scene, p) };
 }
 
-// How the filters directly before a test point shape the noise at each frequency, in dB. An amplifier or
-// mixer before them is where that noise was made, so the walk stops there.
-export function noiseShape(result, nodeIndex) {
+// The noise a test point shows at each frequency: what arrived at the filters just before it, shaped by them.
+// An amplifier or mixer before those filters is where that noise was made, so the walk stops there.
+export function noiseProfile(result, nodeIndex, rbwHz) {
   const filters = [];
-  for (let i = nodeIndex - 1; i >= 0 && result.scene.stages[i].type === 'filter'; i--) {
-    const f = filterSettings(result.scene.stages[i], result.scene, result.params);
+  let source = nodeIndex;
+  for (; source > 0 && result.scene.stages[source - 1].type === 'filter'; source--) {
+    const f = filterSettings(result.scene.stages[source - 1], result.scene, result.params);
     if (f.on) filters.push(f);
   }
-  return (mhz) => filters.reduce((db, f) => db - (filterLossAtDb(f, mhz) - f.lossDb), 0);
+  const arriving = noiseFloorDbm(result.nodes[source], rbwHz), thermal = -174 + 10 * Math.log10(rbwHz);
+  const at = (mhz) => Math.max(thermal, filters.reduce((db, f) => db - filterLossAtDb(f, mhz), arriving));
+  return { at, peakDbm: Math.max(thermal, arriving - filters.reduce((sum, f) => sum + f.lossDb, 0)) };
 }
 
-// Backoff of a tube with a defined saturation point. Power is the total of every signal entering it.
+// Backoff of a tube with a defined saturation point. Power is the total in the carrier's zone, because harmonics are not drive.
 export function amplifierBackoff(result, stageId) {
   const index = result.scene.stages.findIndex((s) => s.id === stageId), stage = result.scene.stages[index];
   if (stage?.psatDbm === undefined) return null;
-  const total = (node) => 10 * Math.log10(node.products.reduce((sum, x) => sum + 10 ** (x.dbm / 10), 0));
+  const { rfMHz, spacingMHz, twoTone } = result.params, half = twoTone ? spacingMHz / 2 : 0;
+  const inZone = (x) => x.hz > ((rfMHz - half) * MHZ) / 2 && x.hz < (rfMHz + half) * MHZ * 1.5;
+  const total = (node) => 10 * Math.log10(node.products.filter(inZone).reduce((sum, x) => sum + 10 ** (x.dbm / 10), 0));
   // A Saleh tube saturates at an input 6 dB above where its small-signal gain would reach the same output.
   const saturatingInputDbm = stage.psatDbm - stage.gainDb + 6;
-  return { psatDbm: stage.psatDbm, iboDb: saturatingInputDbm - total(result.nodes[index]), oboDb: stage.psatDbm - total(result.nodes[index + 1]) };
+  return { psatDbm: stage.psatDbm, iboDb: saturatingInputDbm - total(result.nodes[index]), oboDb: Math.max(0, stage.psatDbm - total(result.nodes[index + 1])) };
 }
 
 export const noiseFloorDbm = (node, rbwHz) => -174 + 10 * Math.log10(rbwHz) + node.nfDb + node.gainDb;

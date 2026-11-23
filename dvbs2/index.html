@@ -88,7 +88,7 @@
       <section><h2>Decoded video</h2><canvas class="video" id="decoded" width="320" height="180" role="img" aria-label="Picture produced by the receiver"></canvas>
         <dl style="margin-top:10px">
           <dt>Receiver</dt><dd id="rxState">–</dd>
-          <dt>Following</dt><dd id="rxSource">–</dd>
+          <dt>Tracking</dt><dd id="rxSource">–</dd>
           <dt>MER</dt><dd id="mer">–</dd>
         </dl>
       </section>
@@ -96,7 +96,7 @@
     <section>
       <h2>Es/(N+I) over time</h2>
       <canvas id="history" role="img" aria-label="Carrier and overlay Es/(N+I) over time, with the decoding threshold"></canvas>
-      <p class="note"><span style="color:#0f9c7e">■</span> Carrier &nbsp; <span style="color:#d0559a">■</span> Overlay &nbsp; <span style="color:#8fa3b0">■</span> Measured MER &nbsp; Dashed: needed to hold lock. Dotted: needed to acquire.</p>
+      <p class="note"><span style="color:#0f9c7e">■</span> Carrier &nbsp; <span style="color:#d0559a">■</span> Overlay &nbsp; <span style="color:#8fa3b0">■</span> Measured MER &nbsp; Dashed: FEC threshold. Dotted: level the demodulator needs to acquire.</p>
     </section>
   </div>
 
@@ -121,18 +121,24 @@
       <div class="buttons"><button id="ramp">Ramp up</button><button id="rampDown">Ramp down</button><button id="pause">Pause</button><button id="restart">Reset lab</button></div>
     </section>
     <section>
-      <h2>Monitoring position</h2>
+      <h2>Monitoring position: what it can know</h2>
       <dl>
-        <dt>Es/(N+I) carrier</dt><dd id="esCarrier">–</dd>
-        <dt>Es/(N+I) overlay</dt><dd id="esOverlay">–</dd>
         <dt>Needed to decode</dt><dd id="esNeed">–</dd>
         <dt>Total output vs normal</dt><dd id="monLevel">–</dd>
-        <dt>Real carrier vs normal</dt><dd id="monCarrier">–</dd>
         <dt>MER</dt><dd id="monMer">–</dd>
         <dt>Service identity</dt><dd id="monId">–</dd>
         <dt>Content signature</dt><dd id="monAuth">–</dd>
       </dl>
       <p class="note" id="monAlert"></p>
+    </section>
+    <section>
+      <h2>Simulator truth: not visible on real equipment</h2>
+      <dl>
+        <dt>Signal being tracked</dt><dd id="trueSource">–</dd>
+        <dt>Es/(N+I) carrier</dt><dd id="esCarrier">–</dd>
+        <dt>Es/(N+I) overlay</dt><dd id="esOverlay">–</dd>
+        <dt>Real carrier vs normal</dt><dd id="monCarrier">–</dd>
+      </dl>
     </section>
     <p class="note">A simulator with a fictional satellite, random symbols and locally drawn pictures. It generates no real DVB-S2 signal and has no transmit path. Unauthorized transmission to a satellite is illegal.</p>
   </div>

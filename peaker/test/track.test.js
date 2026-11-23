@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { beamwidthDeg, gainDbi, offAxisDeg } from '../src/antenna.js';
-import { createAutoPeak, createStepTrack, parabolicOffset, rasterPoints, spiralPoints } from '../src/track.js';
-import { guideProgress } from '../src/guide.js';
+import { controlTicks, createAutoPeak, createStepTrack, dwellTicks, MAX_CONTROL_TICKS, parabolicOffset, rasterPoints, spiralPoints } from '../src/track.js';
+import { guideProgress, lobeCheck, trackingAdvice } from '../src/guide.js';
 import { describeController } from '../src/explain.js';
 
 const D = 2.4, F = 11.7e9, HP = beamwidthDeg(D, F);
@@ -206,7 +206,50 @@ test('the first-task guide advances in order and never moves back', () => {
   assert.equal(guideProgress(0, r), 0);
   assert.equal(guideProgress(0, { ...r, cnDb: 7, levelDbm: -125 }), 1);
   assert.equal(guideProgress(1, { ...r, cnDb: 20, levelDbm: -119 }), 2);
-  assert.equal(guideProgress(0, { ...r, cnDb: 30, levelDbm: -114 }), 4);
-  assert.equal(guideProgress(3, r), 4);
+  assert.equal(guideProgress(0, { ...r, cnDb: 30, levelDbm: -114, stepTracking: true }), 4);
+  const peaked = { ...r, cnDb: 30, levelDbm: -114 };
+  assert.equal(guideProgress(3, { ...peaked, stepTracking: true }), 4);
+  assert.equal(guideProgress(3, { ...r, stepTracking: true }), 3, 'tracking a side lobe does not finish the guide');
+  assert.equal(guideProgress(3, { ...peaked, tracking: true, fixedLossDb: 0.2 }), 3, 'program track alone does not finish the guide');
+  assert.equal(guideProgress(3, { ...peaked, tracking: true, fixedLossDb: 1.2 }), 4);
+  assert.equal(guideProgress(1, { ...r, cnDb: 30, levelDbm: -114, searching: true }), 1, 'a pass during search does not count');
   assert.equal(guideProgress(2, { ...r, tracking: false }), 2);
+});
+
+test('step-track holds a drifting inclined satellite at every simulation speed', () => {
+  for (const rate of [1, 60, 600]) {
+    const rng = seeded(40 + rate), sat = { az: 180, el: 45 }, { tickS } = controlTicks(rate, 1 / 30);
+    const t = createStepTrack({ az: 180, el: 45, beamwidthDeg: HP, noiseDbm: NOISE, dwell: dwellTicks(1.5, tickS), intervalS: 20 });
+    const steps = Math.ceil((rate === 1 ? 300 : 3 * 3600) / tickS);
+    let worst = 0;
+    for (let i = 0; i < steps; i++) {
+      sat.el += (0.0164 / 60) * tickS;
+      sat.az += (0.008 / 60) * tickS;
+      t.advance(tickS);
+      const at = t.target();
+      t.update(sensor(sat, rng)(at));
+      if (i > steps / 10) worst = Math.max(worst, Math.hypot((at.az - sat.az) * Math.cos((sat.el * Math.PI) / 180), at.el - sat.el));
+    }
+    assert.notEqual(t.phase, 'lost', `${rate}x`);
+    assert.ok(worst < HP * 0.45, `${rate}x worst error ${worst}`);
+  }
+});
+
+test('control ticks keep simulated time and stay bounded', () => {
+  assert.deepEqual(controlTicks(1, 1 / 30), { ticks: 1, tickS: 1 / 30 });
+  const fast = controlTicks(600, 1 / 30);
+  assert.equal(fast.ticks, MAX_CONTROL_TICKS);
+  assert.ok(Math.abs(fast.ticks * fast.tickS - 20) < 1e-9);
+  assert.equal(dwellTicks(1.5, fast.tickS), 3);
+  assert.equal(dwellTicks(0.1, fast.tickS), 1);
+});
+
+test('the lobe check and tracking advice follow the readings', () => {
+  assert.equal(lobeCheck(-115, -114, 25), 'main lobe');
+  assert.equal(lobeCheck(-120, -114, 20), 'main lobe, off peak');
+  assert.equal(lobeCheck(-135, -114, 8), 'side lobe or far off');
+  assert.equal(lobeCheck(-140, -114, 1), 'no signal');
+  assert.match(trackingAdvice(0.01, 0.7), /does not need tracking/);
+  assert.match(trackingAdvice(3.3, 0.7), /needs program track or step-track/);
+  assert.match(trackingAdvice(0.1, 0.69), /up to 1\.0 dB/, 'uses the peak-to-peak swing');
 });

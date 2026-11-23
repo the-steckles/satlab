@@ -206,6 +206,12 @@ export function drawSlope(canvas, data, operatingPin) {
   };
   ctx.font = '10px ui-monospace, Consolas, monospace';
   ctx.fillStyle = C.text;
+  if (data.p1dBTwoTone) {
+    dot(data.p1dBTwoTone.pin, data.p1dBTwoTone.pout, '#5f7df0');
+    ctx.fillStyle = C.text;
+    ctx.textAlign = 'left';
+    ctx.fillText('2-tone', X(data.p1dBTwoTone.pin) + 7, Y(data.p1dBTwoTone.pout) + 13);
+  }
   if (data.p1dB) {
     dot(data.p1dB.pin, data.p1dB.pout, '#c9780f');
     ctx.fillStyle = C.text;

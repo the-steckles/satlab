@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CASES, DEFAULTS, evaluate, interfererBand, iqSamples, lockShare, MODCODS, spectrum, ANSWERS, carrierToImDb, twtaOutput, usableShare } from '../src/model.js';
+import { CASES, DEFAULTS, EVIDENCE, evaluate, interfererBand, iqSamples, liveState, lockShare, MODCODS, spectrum, ANSWERS, carrierToImDb, ticketSet, twtaOutput, usableShare, XPOL_ISOLATION_DB } from '../src/model.js';
 
 const near = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, `${msg ?? ''} expected ${b} ± ${tol}, got ${a}`);
 const withI = (i, extra = {}) => ({ ...extra, interferer: { ...DEFAULTS.interferer, on: true, ...i } });
@@ -78,7 +78,7 @@ test('rain lowers the carrier and raises the noise, mispointing only lowers the 
 
 test('a more robust MODCOD restores margin under interference', () => {
   const i = withI({ kind: 'cw', icDb: -5, offsetMHz: -8 });
-  assert.equal(A(evaluate(i)).state, 'Lost');
+  assert.equal(A(evaluate(i)).state, 'Demod locked, FEC failing');
   assert.equal(A(evaluate({ ...i, modcod: 'QPSK 1/2' })).state, 'Locked');
 });
 
@@ -89,8 +89,8 @@ test('moving the carrier away clears the interference', () => {
 
 test('moving your carrier onto the other carrier breaks both', () => {
   const s = A(evaluate({ carrierMHz: 8 }));
-  assert.equal(s.state, 'Lost');
-  assert.equal(s.neighborState, 'Lost');
+  assert.equal(s.state, 'Demod locked, FEC failing');
+  assert.equal(s.neighborState, 'Demod locked, FEC failing');
   near(s.iDb, 0, 1e-9);
   assert.equal(A(evaluate({ carrierMHz: 2 })).iDb, Infinity);
 });
@@ -245,4 +245,77 @@ test('a fast sweep paints a continuous track within one analyzer dwell', () => {
   const raised = (dwell) => { const clean = spectrum(withI({ kind: 'cw', icDb: -60, offsetMHz: 25 }), 'input', 0.5), s = spectrum(p, 'input', 0.5, 512, 26, dwell); return s.db.filter((v, n) => v > clean.db[n] + 1).length; };
   assert.equal(raised(0), 1);
   assert.ok(raised(0.09) > 15);
+});
+
+test('cross-pol and adjacent-satellite tickets have their own signatures', () => {
+  const run = (id) => evaluate(CASES.find((c) => c.id === id).set);
+  assert.equal(A(run('xpolI')).oppositePolDb, XPOL_ISOLATION_DB);
+  assert.equal(B(run('xpolI')).oppositePolDb, XPOL_ISOLATION_DB);
+  assert.equal(A(run('uplinkI')).oppositePolDb, null);
+  assert.ok(A(run('asiI')).beaconDeltaDb < 0);
+  assert.equal(A(run('downlinkI')).beaconDeltaDb, 0);
+  assert.ok(A(run('asiI')).margin < B(run('asiI')).margin - 3);
+});
+
+test('a receive-feed cross-pol leak appears at one site only', () => {
+  const r = evaluate(withI({ source: 'xpol', kind: 'partial', path: 'downlink', icDb: -3, offsetMHz: -6, bwMHz: 8 }));
+  assert.equal(A(r).oppositePolDb, XPOL_ISOLATION_DB);
+  assert.equal(B(r).oppositePolDb, null);
+});
+
+test('repeaking reduces adjacent-satellite interference faster than the carrier recovers', () => {
+  const asi = { source: 'asi', kind: 'partial', path: 'downlink', icDb: -14, offsetMHz: -8, bwMHz: 10 };
+  const off = A(evaluate({ ...withI(asi), mispointDb: 2 })), peaked = A(evaluate({ ...withI(asi), mispointDb: 0 }));
+  assert.ok(peaked.iDb > off.iDb + 7, `C/I ${off.iDb} to ${peaked.iDb}`);
+  assert.ok(off.margin < 0 && peaked.margin > 0);
+});
+
+test('the floor beside a carrier ignores interference that sits only on the carrier', () => {
+  const s = A(evaluate(withI({ kind: 'partial', bwMHz: 5, icDb: -5, offsetMHz: -8 })));
+  assert.ok(Math.abs(s.floorDeltaDb) < 0.3, `floor ${s.floorDeltaDb}`);
+  assert.ok(s.inCarrierDeltaDb > 5, `in carrier ${s.inCarrierDeltaDb}`);
+});
+
+test('rain fades an adjacent-satellite signal along with the carrier', () => {
+  const asi = { source: 'asi', kind: 'partial', path: 'downlink', icDb: -14, offsetMHz: -8, bwMHz: 10 };
+  const dry = A(evaluate({ ...withI(asi), mispointDb: 2 })), wet = A(evaluate({ ...withI(asi), mispointDb: 2, rainDb: 6 }));
+  assert.ok(Math.abs(wet.iDb - dry.iDb) < 0.5, `${dry.iDb} to ${wet.iDb}`);
+});
+
+test('overdrive lifts the floor beside the carrier', () => {
+  assert.ok(A(evaluate({ iboDb: -10 })).floorDeltaDb > 3);
+});
+
+test('backoff acts as a gain step, so the input view does not move', () => {
+  const at = (iboDb) => spectrum({ iboDb }, 'input', 0).db[100];
+  near(at(-6), at(6), 1e-9);
+});
+
+test('a sweep shows Reacquiring after it leaves the carrier', () => {
+  const p = withI({ kind: 'swept', offsetMHz: 0, spanMHz: 32, sweepS: 8, icDb: 3 });
+  const seen = new Set();
+  for (let t = 0; t < 8; t += 0.05) seen.add(liveState(p, 'A', t));
+  assert.ok(seen.has('Reacquiring'), [...seen].join());
+});
+
+test('every ticket has evidence, and varied tickets keep their cause', () => {
+  for (const c of CASES) {
+    assert.ok(EVIDENCE[c.evidence], c.id);
+    for (const edge of [0, 0.999]) {
+      const r = evaluate(ticketSet(c, () => edge));
+      if (c.answer === 'none') assert.equal(A(r).state, 'Locked');
+      else assert.ok(Math.min(A(r).margin, B(r).margin) < evaluate({}).sites.A.margin - 1, c.id);
+    }
+  }
+});
+
+test('the robbing ticket leaves both carriers clear of the tone', () => {
+  const r = evaluate(ticketSet(CASES.find((c) => c.id === 'robbing'), () => 0.999));
+  assert.equal(A(r).iDb, Infinity);
+  assert.ok(r.robbedDb > 3);
+});
+
+test('rain and mispointing tickets show the same table state at every varied fade', () => {
+  const states = (id) => new Set([0, 0.25, 0.5, 0.75, 0.999].map((x) => A(evaluate(ticketSet(CASES.find((c) => c.id === id), () => x))).state));
+  assert.deepEqual([...states('rain')], [...states('mispoint')]);
 });

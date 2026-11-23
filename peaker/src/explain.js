@@ -127,12 +127,12 @@ export function describeController(info) {
         steps: PEAK_STEPS, active: 2, title: fitsSettled(info.scan?.fits) ? 'Peaked' : 'Stopped without a clean peak',
         text: fitsSettled(info.scan?.fits)
           ? `Search found the strongest point, and three passes of parabola fits centered the beam.${fitSentence(info.scan?.fits.az, 'az')}${fitSentence(info.scan?.fits.el, 'el')} Small final moves mean the fit has converged.`
-          : `The last fit did not find a clear top, so this is not a confirmed peak.${fitSentence(info.scan?.fits.az, 'az')}${fitSentence(info.scan?.fits.el, 'el')} Check the level against the expected value and search again.`,
+          : `The last fit did not find a clear top, so this is not a confirmed peak.${fitSentence(info.scan?.fits.az, 'az')}${fitSentence(info.scan?.fits.el, 'el')} Check the level against the expected value and search again. On a fast LEO, keep Program track on so the satellite stays in the search area.`,
       };
     }
     return {
       steps: PEAK_STEPS, active: 0, title: 'No beacon found',
-      text: 'No point in the scan rose far enough above the noise floor, so the antenna went back to where it started. Try pointing closer to the predicted position, or use a larger dish.',
+      text: 'No point in the scan rose far enough above the noise floor, so the antenna went back to where it started. Try pointing closer to the predicted position, or use a larger dish. A fast LEO can also leave the search area during the scan, so keep Program track on for those.',
     };
   }
   const { axis, point, fits } = info.scan;

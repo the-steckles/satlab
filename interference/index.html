@@ -45,7 +45,7 @@
   th { color:var(--muted); font-weight:400; text-align:right; padding:3px 4px; border-bottom:1px solid var(--line); }
   td { text-align:right; padding:3px 4px; border-bottom:1px solid #1c2730; font-variant-numeric:tabular-nums; white-space:nowrap; }
   th:first-child, td:first-child { text-align:left; color:var(--muted); }
-  .Locked { color:var(--accent); } .Marginal { color:var(--warn); } .Lost { color:var(--bad); font-weight:600; }
+  .Locked { color:var(--accent); } .Marginal { color:var(--warn); } .Lost, .Demod { color:var(--bad); font-weight:600; } td.Demod { white-space:normal; } .Reacquiring { color:var(--warn); }
   #iq { height:280px; }
   .plotHead label { display:flex; align-items:center; gap:5px; margin:0; }
   .plotHead select { width:auto; margin:0; padding:3px 5px; }
@@ -58,13 +58,17 @@
   .lessonNav { display:flex; align-items:center; gap:6px; }
   .lessonNav button { width:auto; margin:0; }
   #lessonPos { flex:1; text-align:center; color:var(--muted); font-size:12px; }
-  #answers { display:grid; gap:5px; margin-bottom:8px; }
-  #answers button { margin:0; text-align:left; }
+  #answers, #evidence { display:grid; gap:5px; margin-bottom:8px; }
+  #answers button, #evidence button { margin:0; text-align:left; }
   #answers button.right { background:#123c33; border-color:var(--accent); opacity:1; }
   #answers button.right::after { content:" ✓ cause"; color:var(--accent); }
   #answers button.wrong { background:#3a1f1d; border-color:var(--bad); opacity:1; }
   #answers button.wrong::after { content:" ✕ your answer"; color:var(--bad); }
   .note { font-size:12px; color:var(--muted); margin:6px 0 0; }
+  #signatureBox summary { cursor:pointer; color:var(--muted); font-size:12px; }
+  .signatures { margin:8px 0 0; padding-left:16px; font-size:12px; color:var(--muted); }
+  .signatures li { margin-bottom:4px; }
+  .signatures b { color:var(--text); font-weight:600; }
   @media (max-width:720px) { nav { flex-wrap:wrap; overflow-x:visible; } }
   @media (max-width:1180px) {
     main { grid-template-columns:minmax(0,1fr); padding:10px 16px; }
@@ -92,7 +96,7 @@
       <label>Position in transponder <output id="carrierMHzOut"></output><input id="carrierMHz" type="range" min="-15" max="15" step="0.5" /></label>
       <label>MODCOD<select id="modcod"></select></label>
       <p class="note" id="rateNote" style="margin:-3px 0 7px"></p>
-      <label>Transponder input backoff <output id="iboDbOut"></output><input id="iboDb" type="range" min="-12" max="15" step="0.5" /></label>
+      <label>Tube input backoff, set by transponder gain <output id="iboDbOut"></output><input id="iboDb" type="range" min="-12" max="15" step="0.5" /></label>
     </section>
     <section id="txBox">
       <h2>Transmit site</h2>
@@ -113,6 +117,7 @@
       <label><input id="iOn" type="checkbox" />Enabled</label>
       <label>Type<select id="iKind"><option value="cw">CW (single tone)</option><option value="narrow">Narrowband (modulated)</option><option value="swept">Swept</option><option value="partial">Partial-band</option><option value="barrage">Wideband</option></select></label>
       <label>Enters on<select id="iPath"><option value="uplink">Uplink (all sites)</option><option value="downlink">Downlink (Site A only)</option></select></label>
+      <label id="iSourceWrap">Where it comes from<select id="iSource"><option value="none">Unknown or co-polarized</option><option value="xpol">Opposite polarization</option><option value="asi">Adjacent satellite (use Downlink)</option></select></label>
       <label>Level relative to nominal carrier <output id="icDbOut"></output><input id="icDb" type="range" min="-30" max="20" step="0.5" /></label>
       <label id="offsetWrap"><span id="offsetName">Position</span> <output id="offsetMHzOut"></output><input id="offsetMHz" type="range" min="-18" max="18" step="0.5" /></label>
       <p class="note" id="cwNote">An unmodulated tone has no bandwidth. The analyzer draws it as a line one resolution bin wide.</p>
@@ -153,11 +158,29 @@
       <h3 id="lessonTitle"></h3>
       <p id="lessonText" aria-live="polite"></p>
       <div id="answers" role="group" aria-label="Possible causes" hidden></div>
+      <div id="evidence" role="group" aria-label="Evidence for your answer" hidden></div>
       <div class="lessonNav">
         <button id="lessonBack">Back</button>
         <span id="lessonPos"></span>
         <button id="lessonNext">Next</button>
       </div>
+    </section>
+    <section id="signatureBox">
+      <details>
+        <summary>Field guide: what each problem looks like</summary>
+        <ul class="signatures">
+          <li><b>CW tone:</b> one thin line and a steady waterfall stripe. IQ points become rings. Beacon normal.</li>
+          <li><b>Modulated signal:</b> a raised block with width. IQ points become round clouds. Beacon normal.</li>
+          <li><b>Swept:</b> a line moving across the waterfall, with errors on a repeating period.</li>
+          <li><b>Cross-pol:</b> a signal much stronger on the opposite polarization. Every site if the uplink feed leaks, one site if its receive feed is skewed.</li>
+          <li><b>Adjacent satellite:</b> one site only, usually a small or mispointed dish. It falls faster than your carrier rises when you repeak.</li>
+          <li><b>Local to one site:</b> one site only, with the beacon normal. Check nearby emitters, cabling and the LNB.</li>
+          <li><b>Rain:</b> one site, beacon and carrier fall together, and the noise floor rises.</li>
+          <li><b>Mispointing:</b> one site, beacon and carrier fall together, and the noise floor stays flat.</li>
+          <li><b>Overdrive:</b> every site and carrier, with shoulders beside the carriers and no new signal.</li>
+          <li><b>Power robbing:</b> every site and carrier fall, with a strong new signal clear of both carriers.</li>
+        </ul>
+      </details>
     </section>
     <section id="iqBox">
       <div class="plotHead"><h2>IQ constellation</h2><label>Site <select id="iqSite"><option value="A">A</option><option value="B">B</option></select></label></div>

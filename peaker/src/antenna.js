@@ -79,6 +79,19 @@ export function beamwidthDeg(diameterM, freqHz) {
 }
 
 // ITU-R S.580 side-lobe envelope, continuing into the S.465 far-out region.
+// The first side lobe, found by walking out past the first null.
+export function firstSideLobe(diameterM, freqHz) {
+  const beam = beamwidthDeg(diameterM, freqHz), step = beam / 200, peak = peakGainDbi(diameterM, freqHz);
+  let prev = gainDbi(beam / 2, diameterM, freqHz), rising = false;
+  for (let off = beam / 2 + step; off < beam * 5; off += step) {
+    const g = gainDbi(off, diameterM, freqHz);
+    if (g > prev) rising = true;
+    else if (rising) return { offDeg: off - step, relDb: prev - peak };
+    prev = g;
+  }
+  return { offDeg: beam * 1.6, relDb: gainDbi(beam * 1.6, diameterM, freqHz) - peak };
+}
+
 export function envelopeDbi(thetaDeg) {
   if (thetaDeg <= 20) return 29 - 25 * Math.log10(thetaDeg);
   if (thetaDeg <= 26.3) return -3.5;

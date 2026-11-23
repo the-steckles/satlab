@@ -1,5 +1,5 @@
 import { LESSONS } from './lessons.js';
-import { amplifierBackoff, filterEdges, filterLossAtDb, filterSettings, loForProduct, noiseFloorDbm, noiseShape, PRODUCTS, runScene, SCENES, summarize, sweep, wantedMHz } from './model.js';
+import { amplifierBackoff, filterEdges, filterLossAtDb, filterSettings, loForProduct, noiseFloorDbm, noiseProfile, PRODUCTS, runScene, SCENES, summarize, sweep, wantedMHz } from './model.js';
 import { drawFilter, drawPlan, drawSlope, drawSpectrum, KINDS } from './plots.js';
 import { mountSuite, parseLesson, writeLesson } from '../../lib/suite.js';
 
@@ -56,12 +56,17 @@ function renderPlan() {
     $('planText').textContent = `The mixer makes two sidebands: the wanted one at ${f(out)} MHz and another at ${f(other)} MHz. An upconverter's input carries only the modem IF, so the concern here is the other sideband. The band filter after the mixer removes it and the LO before the HPA.${flip}`;
     return;
   }
+  if (p.rfMHz === p.loMHz || (p.product === 'rfMinusLo' && p.rfMHz === 2 * p.loMHz)) {
+    drawPlan($('plan'), { rf: p.rfMHz, lo: p.loMHz, out, image: r.imageMHz, product: p.product, mode: 'mirror' });
+    $('planText').textContent = p.rfMHz === p.loMHz ? 'F1 equals the LO, so the difference product is at 0 MHz, which is DC. Move F1 or the LO to get a usable output.' : 'F1 is exactly twice the LO, so the image would sit at 0 MHz. There is no real signal at DC to convert, so this plan has no practical image.';
+    return;
+  }
   const aboveTwoLo = p.product === 'rfMinusLo' && p.rfMHz > 2 * p.loMHz;
   drawPlan($('plan'), { rf: p.rfMHz, lo: p.loMHz, out, image: r.imageMHz, product: p.product, mode: aboveTwoLo ? 'aboveTwoLo' : 'mirror' });
   const why = p.product === 'sum'
     ? `F1 + LO lands on ${f(out)} MHz. A signal at ${f(r.imageMHz)} MHz also lands there, because Image − LO gives the same result.`
     : aboveTwoLo
-      ? `F1 − LO lands on ${f(out)} MHz. Both F1 and the image are above this low LO, so the image is not a mirror across it. A signal at ${f(r.imageMHz)} MHz reaches the same output through its sum product, Image + LO.`
+      ? `F1 − LO lands on ${f(out)} MHz. ${r.imageMHz === p.loMHz ? 'The image sits exactly on the LO, not the same distance from it as F1' : r.imageMHz > p.loMHz ? 'Both F1 and the image are above this low LO' : 'The image is below this LO, but not the same distance from it as F1'}, so it is not a mirror across the LO. A signal at ${f(r.imageMHz)} MHz reaches the same output through its sum product, Image + LO.`
       : `A mixer's output depends on distance from the LO. F1 is ${f(out)} MHz ${side} the LO, and the image is the same distance on the other side at ${f(r.imageMHz)} MHz, so both convert to ${f(out)} MHz.`;
   $('planText').textContent = `${why} Once mixed, they share one frequency and cannot be separated, so the image must be filtered out before the mixer.${flip}`;
 }
@@ -116,7 +121,7 @@ function renderFilter() {
   if (document.activeElement !== $('filterCenter')) $('filterCenter').value = mhzLabel(f.centerMHz);
   if (document.activeElement !== $('filterBw')) $('filterBw').value = mhzLabel(f.bwMHz);
   $('filterCenter').disabled = f.tracking;
-  $('filterPoles').value = f.poles; $('filterPolesOut').textContent = `${f.poles} (${f.poles * 6} dB/octave)`;
+  $('filterPoles').value = f.poles; $('filterPolesOut').textContent = `${f.poles} (${f.poles * 6} dB per doubling of offset)`;
   $('filterLoss').value = f.lossDb; $('filterLossOut').textContent = dbText(f.lossDb);
   $('filterTrack').checked = f.tracking;
   $('filterEnabled').checked = f.enabled;
@@ -136,13 +141,12 @@ function setFilter(change) {
 
 function renderSpectrum() {
   const node = S.result.nodes[S.nodeIndex];
-  const floorDbm = noiseFloorDbm(node, S.rbw);
-  const strongest = Math.max(floorDbm + 20, ...node.products.map((x) => x.dbm));
+  const floorDbm = noiseFloorDbm(node, S.rbw), noise = noiseProfile(S.result, S.nodeIndex, S.rbw);
+  const strongest = Math.max(Math.max(floorDbm, noise.peakDbm) + 20, ...node.products.map((x) => x.dbm));
   const topDbm = Math.ceil((strongest + 8) / 10) * 10;
   const bottomDbm = Math.min(topDbm - 80, Math.floor((floorDbm - 12) / 10) * 10);
   const [loHz, hiHz] = plotRange(node, floorDbm);
-  const shape = noiseShape(S.result, S.nodeIndex), thermal = -174 + 10 * Math.log10(S.rbw);
-  const noiseAt = (hz) => Math.max(thermal, floorDbm + shape(Math.max(1e-3, hz / 1e6)));
+  const noiseAt = (hz) => noise.at(Math.max(1e-3, hz / 1e6));
   drawSpectrum($('spectrum'), { list: node.products, loHz, hiHz, topDbm, bottomDbm, floorDbm, noiseAt, hoverX: S.hoverX });
   $('specTitle').textContent = `Spectrum at ${node.name}`;
 }
@@ -189,9 +193,11 @@ function renderLesson(node, s) {
   const list = LESSONS[S.sceneId], lesson = list[S.lesson];
   $('lessonHead').textContent = `Guided experiment: ${SCENES[S.sceneId].name}`;
   $('lessonTitle').textContent = lesson.title;
-  suite.text($('lessonText'), lesson.text({ r: S.result, s, node }));
+  // Lessons describe the chain's output, so clicking another test point cannot make them false.
+  const output = S.result.nodes.at(-1);
+  suite.text($('lessonText'), lesson.text({ r: S.result, s: summarize(output), node: output, slope: S.slope }));
   const expected = lessonParams(S.sceneId, S.lesson);
-  $('lessonChanged').hidden = Object.keys({ ...expected, ...S.params }).every((k) => k === 'filters' ? !Object.keys(S.params.filters).length : !!expected[k] === !!S.params[k] && (typeof expected[k] !== 'number' || expected[k] === S.params[k]) && (typeof expected[k] !== 'string' || expected[k] === S.params[k]));
+  $('lessonChanged').hidden = Object.keys({ ...expected, ...S.params }).every((k) => k === 'filters' ? JSON.stringify(expected.filters) === JSON.stringify(S.params.filters) : !!expected[k] === !!S.params[k] && (typeof expected[k] !== 'number' || expected[k] === S.params[k]) && (typeof expected[k] !== 'string' || expected[k] === S.params[k]));
   $('lessonPos').textContent = `${S.lesson + 1} of ${list.length}`;
   $('lessonBack').disabled = S.lesson === 0;
   $('lessonNext').disabled = S.lesson === list.length - 1;
@@ -319,8 +325,9 @@ function wire() {
     setFilter({ track: e.target.checked, centerMHz: e.target.checked ? undefined : filterSettings(stage, SCENES[S.sceneId], S.params).centerMHz });
   });
   $('filterReset').addEventListener('click', () => {
-    const { [S.filterId]: _removed, ...rest } = S.params.filters;
-    S.params.filters = rest;
+    // Back to this step's design, which may itself retune the filter.
+    const { [S.filterId]: _removed, ...rest } = S.params.filters, design = lessonParams(S.sceneId, S.lesson).filters[S.filterId];
+    S.params.filters = design ? { ...rest, [S.filterId]: design } : rest;
     render();
   });
   $('mixerType').addEventListener('change', (e) => { S.params.mixerType = e.target.value; render(); });

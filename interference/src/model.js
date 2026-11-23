@@ -1,28 +1,33 @@
 // Link model for a fictional bent-pipe satellite. Interference is set relative to the carrier,
 // so this teaches effects and diagnosis without any transmit-power or targeting inputs.
 import { constellation, gaussian, merDb } from '../../lib/constellation.js';
-import { MODCODS, RELOCK_S } from '../../lib/modcods.js';
-import { twtaOutput } from '../../lib/twta.js';
+import { MODCODS, RELOCK_S, RELOCK_STEPS } from '../../lib/modcods.js';
+import { DEMOD_HOLD_DB, RECEIVER_NAMES, receiverState } from '../../lib/receiver.js';
+import { carrierToImDb, twtaOutput } from '../../lib/twta.js';
 
 export const RS_MHZ = 5, TP_HALF_MHZ = 18;
 export const UP_CENTER_MHZ = 14250, DOWN_CENTER_MHZ = 12500;
+// Illustrative: a poorly aligned feed. A well-aligned one is typically 30 dB or better.
+export const XPOL_ISOLATION_DB = 15;
+// Illustrative: moving off peak toward a neighbor raises its signal faster than it lowers yours.
+const ASI_DB_PER_POINTING_DB = 3, ASI_MAX_RISE_DB = 20;
 const ALC_RANGE_DB = 15, UPLINK_CN_DB = 22, DOWNLINK_CN_AT_SAT_DB = 25, SYSTEM_TEMP_K = 150, RAIN_TEMP_K = 275;
 
-export { MODCODS, twtaOutput };
+export { carrierToImDb, MODCODS, twtaOutput };
 
 export const DEFAULTS = {
   carrierMHz: -8, rsMHz: RS_MHZ, neighborOn: true, neighborMHz: 8, neighborRsMHz: RS_MHZ, neighborTrimDb: 0, neighborModcod: '16APSK 3/4',
   modcod: '16APSK 3/4', iboDb: 6, trimDb: 0, alc: false, rainDb: 0, mispointDb: 0,
-  interferer: { on: false, kind: 'cw', path: 'uplink', icDb: -10, offsetMHz: -8, narrowMHz: 0.5, bwMHz: 12, wideMHz: 36, spanMHz: 30, sweepWidthMHz: 0, sweepS: 8, sweepShape: 'triangle' },
+  interferer: { on: false, source: 'none', kind: 'cw', path: 'uplink', icDb: -10, offsetMHz: -8, narrowMHz: 0.5, bwMHz: 12, wideMHz: 36, spanMHz: 30, sweepWidthMHz: 0, sweepS: 8, sweepShape: 'triangle' },
 };
 
 const lin = (db) => 10 ** (db / 10);
 const dB = (x) => 10 * Math.log10(x);
 
-// shortcut: typical two-carrier C/IM, 11 dB at saturation and improving 2 dB per dB of backoff. Replace with a measured tube curve if one is ever available.
-export const carrierToImDb = (drive) => Math.max(9, 11 - 2 * dB(drive));
 const constantEnvelope = (i) => i.on && (i.kind === 'cw' || i.kind === 'swept');
 const overlap = (a, b, c, d) => Math.max(0, Math.min(b, d) - Math.max(a, c));
+// A neighbor's signal comes through the same rain as yours, so rain does not change C/I much.
+const asiRiseDb = (p) => (p.interferer.source === 'asi' ? Math.min(ASI_MAX_RISE_DB, p.mispointDb * ASI_DB_PER_POINTING_DB) - p.rainDb : 0);
 
 // The instantaneous band the interferer occupies, in MHz from the transponder center.
 export function interfererBand(i, tS = 0) {
@@ -94,21 +99,26 @@ function carrierAt(tp, p, centerMHz, rs, inputPower, site, clearOut, tS, otherMH
   const band = interfererBand(p.interferer, tS);
   const inBand = matchedShare(band, centerMHz, rs);
   const iUp = p.interferer.on && p.interferer.path === 'uplink' ? tp.iPower * inBand * tp.ratio * loss : 0;
-  const iDown = p.interferer.on && p.interferer.path === 'downlink' && isA ? clearOut * lin(p.interferer.icDb) * inBand : 0;
+  const iDownPower = p.interferer.on && p.interferer.path === 'downlink' && isA ? clearOut * lin(p.interferer.icDb + asiRiseDb(p)) : 0;
+  const iDown = iDownPower * inBand;
   // Two carriers placed on top of each other interfere just like any other signal.
   const iCarrier = (otherPower * tp.ratio * tp.weak * loss * overlap(lo, hi, otherMHz - otherRs / 2, otherMHz + otherRs / 2)) / otherRs;
   const interference = iUp + iDown + iCarrier;
   const total = nUp + nDown + im + interference;
   const esn0 = dB(c / total);
+  // The floor is read just outside the carrier, so only noise-like energy that reaches there lifts it.
+  const spread = band && band[1] > band[0] && !constantEnvelope(p.interferer) ? ((p.interferer.path === 'uplink' ? tp.iPower * tp.ratio * loss : iDownPower) / (band[1] - band[0])) : 0;
+  const regrowth = (im / rs) * shoulder(centerMHz + rs * 0.65, centerMHz, rs); // Overdrive shoulders are what the analyzer sees there.
+  const beside = regrowth + [centerMHz - rs * 0.65, centerMHz + rs * 0.65].reduce((sum, f) => sum + (band && f >= band[0] && f <= band[1] ? spread : 0), 0) / 2;
   return {
     c, esn0, iDb: interference > 0 ? dB(c / interference) : Infinity,
     cnUp: dB(c / nUp), cnDown: dB(c / nDown), cim: dB(c / im),
     // A tone is a line, not a raised floor. Noise-like interference does lift the measured floor.
-    floor: (nUp + nDown + (constantEnvelope(p.interferer) ? 0 : iUp + iDown)) / rs,
+    floor: (nUp + nDown) / rs + beside, inCarrier: (nUp + nDown + interference) / rs,
   };
 }
 
-const stateOf = (margin) => (margin >= 1 ? 'Locked' : margin >= 0 ? 'Marginal' : 'Lost');
+const stateOf = (es, need) => RECEIVER_NAMES[receiverState(es, need)];
 
 // Levels are reported against the same link with no interference, rain or mispointing.
 export function evaluate(params, tS = 0) {
@@ -124,10 +134,12 @@ export function evaluate(params, tS = 0) {
     const other = p.neighborOn ? carrierAt(tp, p, p.neighborMHz, p.neighborRsMHz, tp.neighbor, site, clearOut, tS, p.carrierMHz, p.rsMHz, tp.carrier) : null;
     const margin = own.esn0 - need, neighborNeed = MODCODS[p.neighborModcod];
     sites[site] = {
-      ...own, margin, state: stateOf(margin),
+      ...own, margin, state: stateOf(own.esn0, need),
       beaconDeltaDb: site === 'A' ? 0 - p.rainDb - p.mispointDb : 0, // The beacon has its own path, so only propagation and pointing move it.
-      carrierDeltaDb: dB(own.c / reference.c), floorDeltaDb: dB(own.floor / reference.floor),
-      neighborEsn0: other?.esn0 ?? null, neighborMargin: other ? other.esn0 - neighborNeed : null, neighborState: other ? stateOf(other.esn0 - neighborNeed) : 'Off',
+      // An uplink leak is on the satellite for everyone. A receive-feed leak exists only at that site.
+      oppositePolDb: p.interferer.on && p.interferer.source === 'xpol' && (p.interferer.path === 'uplink' || site === 'A') ? XPOL_ISOLATION_DB : null,
+      carrierDeltaDb: dB(own.c / reference.c), floorDeltaDb: dB(own.floor / reference.floor), inCarrierDeltaDb: dB(own.inCarrier / reference.inCarrier),
+      neighborEsn0: other?.esn0 ?? null, neighborMargin: other ? other.esn0 - neighborNeed : null, neighborState: other ? stateOf(other.esn0, neighborNeed) : 'Off',
     };
   }
   return {
@@ -135,6 +147,7 @@ export function evaluate(params, tS = 0) {
     outputDb: dB(tp.pout), inputBackoffDb: -dB(tp.pin),
     robbedDb: dB((quietTp.ratio * quietTp.weak) / (tp.ratio * tp.weak)),
     interfererShareDb: tp.upI > 0 ? dB(tp.upI / tp.pin) : null,
+    inputShare: tp.upI / tp.pin,
     shares: shareOf(tp),
   };
 }
@@ -167,7 +180,8 @@ export function spectrum(params, view, tS, bins = 512, spanHalf = 26, dwellS = 0
   const clear = evaluate({ ...p, iboDb: DEFAULTS.iboDb, alc: false, rainDb: 0, mispointDb: 0, trimDb: 0, neighborTrimDb: 0, interferer: { ...p.interferer, on: false } });
   const isInput = view === 'input', isSite = view === 'A' || view === 'B';
   const loss = view === 'A' ? lin(-(p.rainDb + p.mispointDb)) : 1;
-  const gain = isInput ? 1 : tp.ratio * tp.weak * loss;
+  // The backoff control is a gain step after the satellite's input, so the input view is read ahead of it.
+  const gain = isInput ? lin(p.iboDb - DEFAULTS.iboDb) : tp.ratio * tp.weak * loss;
   const ref = (isInput ? clear.tp.carrier : clear.tp.carrier * clear.tp.ratio) / RS_MHZ;
   let band = interfererBand(p.interferer, tS);
   if (band && p.interferer.kind === 'swept' && dwellS > 0) {
@@ -191,10 +205,25 @@ export function spectrum(params, view, tS, bins = 512, spanHalf = 26, dwellS = 0
     psd += tp.noisePerMHz;
     if (band && p.interferer.path === 'uplink' && n >= firstBin && n <= lastBin) psd += iDensity;
     let level = psd * gain * filter + downNoise;
-    if (band && p.interferer.path === 'downlink' && view === 'A' && n >= firstBin && n <= lastBin) level += (clear.tp.carrier * clear.tp.ratio * lin(p.interferer.icDb)) / shownMHz;
+    if (band && p.interferer.path === 'downlink' && view === 'A' && n >= firstBin && n <= lastBin) level += (clear.tp.carrier * clear.tp.ratio * lin(p.interferer.icDb + asiRiseDb(p))) / shownMHz;
     out[n] = dB(level / ref);
   }
   return { db: out, lowMHz: -spanHalf, highMHz: spanHalf, centerMHz: VIEWS[view].centerMHz, band };
+}
+
+// A hit that keeps demod lock only costs FEC time. One that loses the demod costs a full reacquisition.
+const recoveryS = (site) => (site.esn0 < DEMOD_HOLD_DB ? RELOCK_S : RELOCK_STEPS.fecLock);
+
+// The state to display during a sweep, including the wait to recover after a hit.
+export function liveState(params, siteName, tS) {
+  const now = evaluate(params, tS).sites[siteName], i = params.interferer;
+  if (!i?.on || i.kind !== 'swept' || now.margin < 0) return now.state;
+  const period = i.sweepS, step = 0.05;
+  for (let back = step; back <= RELOCK_S; back += step) {
+    const then = evaluate(params, (((tS - back) % period) + period) % period).sites[siteName];
+    if (then.margin < 0 && back < recoveryS(then)) return 'Reacquiring';
+  }
+  return now.state;
 }
 
 // Time a modem can actually use, because each loss of lock costs a reacquisition afterward.
@@ -204,7 +233,8 @@ export function usableShare(params, site = 'A', samples = 192) {
   // The first pass only settles the relock timer, because the pattern repeats.
   for (let pass = 0; pass < 2; pass++) {
     for (let i = 0; i < samples; i++) {
-      if (evaluate(params, (i / samples) * sweepS).sites[site].margin < 0) wait = RELOCK_S;
+      const s = evaluate(params, (i / samples) * sweepS).sites[site];
+      if (s.margin < 0) wait = Math.max(wait, recoveryS(s));
       else if (wait > 0) wait -= dt;
       else if (pass === 1) usable++;
     }
@@ -233,47 +263,76 @@ export function iqSamples(r, site, count = 900, rand = Math.random) {
       refI: p.i, refQ: p.q,
     });
   }
-  return { samples, ideal, merDb: merDb(samples) };
+  return { samples, ideal, merDb: merDb(samples, ideal) };
 }
 
 // Each case is a set of conditions whose symptoms the learner has to read.
 export const CASES = [
   {
-    id: 'rain', answer: 'rain', set: { rainDb: 6 },
+    id: 'rain', answer: 'rain', evidence: 'floorUp', set: { rainDb: 11 }, // Same fade range as mispointing, so only the analyzer floor separates them.
     why: 'Only Site A dropped, and its noise floor rose. Rain both absorbs the signal and radiates thermal noise into the antenna, which is what separates it from a pointing error. Check the weather and the beacon at Site A.',
   },
   {
-    id: 'mispoint', answer: 'mispoint', set: { mispointDb: 6 },
+    id: 'mispoint', answer: 'mispoint', evidence: 'floorFlat', set: { mispointDb: 11 },
     why: 'Only Site A dropped, but its noise floor stayed about the same or fell slightly. That points to the antenna rather than the atmosphere. Check tracking and peak the antenna on the beacon.',
   },
   {
-    id: 'uplinkI', answer: 'uplinkBand', set: { interferer: { on: true, kind: 'partial', path: 'uplink', icDb: 4, offsetMHz: -8, bwMHz: 6 } },
+    id: 'uplinkI', answer: 'uplinkBand', evidence: 'block', set: { interferer: { on: true, kind: 'partial', path: 'uplink', icDb: 4, offsetMHz: -8, bwMHz: 6 } },
     why: 'Both sites lost margin on the same carrier, so the source entered at the satellite. The analyzer shows a raised block of energy with width, which means a modulated signal. Capture the spectrum and contact the satellite operator, who can investigate and geolocate it.',
   },
   {
-    id: 'uplinkTone', answer: 'uplinkTone', set: { interferer: { on: true, kind: 'cw', path: 'uplink', icDb: 4, offsetMHz: -8 } },
+    id: 'uplinkTone', answer: 'uplinkTone', evidence: 'line', set: { interferer: { on: true, kind: 'cw', path: 'uplink', icDb: -6, offsetMHz: -8 } },
     why: 'Both sites are hit, so it entered at the satellite. The analyzer shows one thin line on the carrier, and the waterfall shows a steady vertical stripe. That is an unmodulated tone. A common accidental source is a terminal transmitting an unmodulated carrier.',
   },
   {
-    id: 'sweptI', answer: 'swept', set: { interferer: { on: true, kind: 'swept', path: 'uplink', icDb: 2, offsetMHz: 0, spanMHz: 30, sweepS: 6 } },
+    id: 'sweptI', answer: 'swept', evidence: 'moving', set: { interferer: { on: true, kind: 'swept', path: 'uplink', icDb: 2, offsetMHz: 0, spanMHz: 30, sweepS: 6 } },
     why: 'Service drops and returns on a repeating schedule at both sites. A single analyzer sweep can miss it, but the waterfall shows a line moving across the transponder. Time-based views are what catch intermittent interference.',
   },
   {
-    id: 'healthy', answer: 'none', set: {},
+    id: 'xpolI', answer: 'xpol', evidence: 'opposite', set: { interferer: { on: true, source: 'xpol', kind: 'partial', path: 'uplink', icDb: -3, offsetMHz: -6, bwMHz: 8 } },
+    why: 'Both sites see a signal with width, so it is on the satellite. The opposite-polarization row shows the same signal 15 dB stronger on the other polarization. That is a carrier on the other polarization leaking across through only 15 dB of isolation, often from a poorly aligned uplink feed. Give the operator both polarization readings.',
+  },
+  {
+    id: 'asiI', answer: 'asi', evidence: 'beaconBlock', set: { mispointDb: 2, interferer: { on: true, source: 'asi', kind: 'partial', path: 'downlink', icDb: -14, offsetMHz: -8, bwMHz: 10 } },
+    why: 'Only Site A is affected, there is a signal with width, and its beacon is also slightly down. A local emitter would leave the beacon alone. A small or mispointed dish moves its main beam toward a neighboring satellite and receives that satellite’s carriers. Repeak the antenna, then see whether the signal falls.',
+  },
+  {
+    id: 'healthy', answer: 'none', evidence: 'clean', set: {},
     why: 'Both sites are locked with healthy margin, and the spectrum shows only the two expected carriers. Not every ticket is an RF fault. Check the customer’s equipment and configuration before escalating.',
   },
   {
-    id: 'downlinkI', answer: 'downlink', set: { interferer: { on: true, kind: 'cw', path: 'downlink', icDb: -6, offsetMHz: -8 } },
+    id: 'downlinkI', answer: 'downlink', evidence: 'localLine', set: { interferer: { on: true, kind: 'cw', path: 'downlink', icDb: -6, offsetMHz: -8 } },
     why: 'Only Site A is affected and its carrier level is unchanged, but a new signal sits on top of it. The problem is local to the receive site. Look for nearby emitters, and check cabling and the LNB.',
   },
   {
-    id: 'overdrive', answer: 'overdrive', set: { iboDb: -10 },
+    id: 'overdrive', answer: 'overdrive', evidence: 'shoulders', set: { iboDb: -10 },
     why: 'Both sites and both carriers lost margin even though their received level went up, and no separate signal appeared. The transponder is being driven past saturation, so intermodulation is the limit. Reduce drive to restore backoff.',
   },
+  {
+    id: 'robbing', answer: 'robbing', evidence: 'between', set: { interferer: { on: true, kind: 'cw', path: 'uplink', icDb: 10, offsetMHz: 0 } },
+    why: 'Both carriers fell at both sites, yet nothing lands on them. A strong line sits between them and takes the tube’s limited output. Unlike overdrive, there is a distinct new signal. Capture it and report it to the satellite operator.',
+  },
 ];
+
+export const EVIDENCE = {
+  line: 'Thin steady line on my carrier, at both sites', block: 'Raised block with width on my carrier, at both sites', moving: 'Line moving across the waterfall',
+  opposite: 'Same signal stronger on the opposite polarization', floorUp: 'Beacon down, floor beside the carrier up', floorFlat: 'Beacon down, floor beside the carrier flat',
+  beaconBlock: 'One site, beacon down, block with width', localLine: 'One site, beacon normal, new signal', shoulders: 'Shoulders beside the carriers, no new signal',
+  between: 'Strong line between the carriers', clean: 'Only the two expected carriers',
+};
+
+// Varies each ticket so a memorized value cannot identify it.
+export function ticketSet(c, rand = Math.random) {
+  const jitter = (v, range) => v + Math.round((rand() * 2 - 1) * range * 2) / 2;
+  const set = { ...c.set };
+  if (set.rainDb) set.rainDb = jitter(set.rainDb, 1);
+  if (set.mispointDb && !set.interferer) set.mispointDb = jitter(set.mispointDb, 1);
+  if (set.interferer) set.interferer = { ...set.interferer, icDb: jitter(set.interferer.icDb, 1), offsetMHz: set.interferer.offsetMHz + (c.id === 'robbing' ? jitter(0, 1) : jitter(0, 0.5)) };
+  return set;
+}
 
 export const ANSWERS = {
   rain: 'Rain fade at Site A', mispoint: 'Antenna mispointing at Site A', uplinkTone: 'CW tone on the uplink',
   uplinkBand: 'Modulated signal on the uplink', swept: 'Swept interference', downlink: 'Local interference at Site A',
-  overdrive: 'Transponder overdrive', none: 'No RF fault',
+  overdrive: 'Transponder overdrive', robbing: 'Power robbing by a strong signal', xpol: 'Cross-polarized carrier', asi: 'Adjacent-satellite interference', none: 'No RF fault',
 };

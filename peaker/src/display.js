@@ -425,3 +425,52 @@ export function drawPattern(canvas, { diameterM, freqHz, beamwidth, offAxis }) {
   }
   ctx.restore();
 }
+
+// The satellite's daily path on an equal-angle plot, so the beam is drawn as a true circle.
+export function drawMotion(canvas, { rows, beamDeg, antenna, sat }) {
+  if (!canvas.clientWidth) return;
+  const { ctx, w, h } = prepare(canvas);
+  const pad = { l: 44, r: 10, t: 8, b: 30 }, pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+  const reach = Math.max(beamDeg * 0.75, ...rows.map((r) => Math.max(Math.abs(r.x), Math.abs(r.y)))) * 1.15;
+  const scale = Math.min(pw, ph) / (2 * reach), cx = pad.l + pw / 2, cy = pad.t + ph / 2;
+  const X = (v) => cx + v * scale, Y = (v) => cy - v * scale;
+  const tick = reach > 2 ? 1 : reach > 0.8 ? 0.5 : reach > 0.3 ? 0.2 : 0.1;
+  ctx.strokeStyle = C.grid;
+  ctx.fillStyle = C.axis;
+  ctx.beginPath();
+  for (let v = -Math.floor(reach / tick) * tick; v <= reach + 1e-9; v += tick) {
+    const x = Math.round(X(v)) + 0.5, y = Math.round(Y(v)) + 0.5;
+    ctx.moveTo(x, cy - reach * scale); ctx.lineTo(x, cy + reach * scale);
+    ctx.moveTo(cx - reach * scale, y); ctx.lineTo(cx + reach * scale, y);
+  }
+  ctx.stroke();
+  ctx.textAlign = 'center';
+  ctx.fillText('Cross-elevation from average (°)', cx, h - 5);
+  ctx.fillText(`−${tick}`, X(-tick), cy + reach * scale + 12);
+  ctx.fillText('0', X(0), cy + reach * scale + 12);
+  ctx.fillText(`+${tick}`, X(tick), cy + reach * scale + 12);
+  ctx.textAlign = 'right';
+  ctx.fillText(`+${tick}`, cx - reach * scale - 4, Y(tick) + 4);
+  ctx.fillText('0', cx - reach * scale - 4, Y(0) + 4);
+  ctx.fillText(`−${tick}`, cx - reach * scale - 4, Y(-tick) + 4);
+  ctx.save();
+  ctx.translate(11, cy);
+  ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = 'center';
+  ctx.fillText('Elevation (°)', 0, 0);
+  ctx.restore();
+  ctx.save();
+  ctx.beginPath(); ctx.rect(cx - reach * scale, cy - reach * scale, 2 * reach * scale, 2 * reach * scale); ctx.clip();
+  ctx.strokeStyle = C.axis;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  rows.forEach((r, i) => { if (i) ctx.lineTo(X(r.x), Y(r.y)); else ctx.moveTo(X(r.x), Y(r.y)); });
+  ctx.stroke();
+  ctx.strokeStyle = C.hold;
+  ctx.beginPath(); ctx.arc(X(antenna.x), Y(antenna.y), (beamDeg / 2) * scale, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = C.trace;
+  ctx.strokeStyle = C.bg;
+  ctx.beginPath(); ctx.arc(X(sat.x), Y(sat.y), 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.restore();
+  ctx.lineWidth = 1;
+}

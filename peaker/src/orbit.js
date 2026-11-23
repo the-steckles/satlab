@@ -37,6 +37,20 @@ export function subLongitude(satrec, date) {
   return toDeg(eciToGeodetic(state.position, gstime(date)).longitude);
 }
 
+// The satellite's path over one day, centered on its average position.
+export function dailyMotion(satrec, station, from, points = 96) {
+  const looks = [];
+  for (let i = 0; i <= points; i++) {
+    const l = look(satrec, station, new Date(from.getTime() + (i / points) * 86164e3));
+    if (l) looks.push(l);
+  }
+  const firstAz = looks[0].az, unwrap = (az) => firstAz + (((az - firstAz + 540) % 360) - 180);
+  const centerAz = looks.reduce((sum, l) => sum + unwrap(l.az), 0) / looks.length, centerEl = looks.reduce((sum, l) => sum + l.el, 0) / looks.length;
+  const cosEl = Math.cos((centerEl * Math.PI) / 180);
+  const rows = looks.map((l) => ({ x: (unwrap(l.az) - centerAz) * cosEl, y: l.el - centerEl }));
+  return { rows, centerAz: ((centerAz % 360) + 360) % 360, centerEl, peakDeg: Math.max(...rows.map((r) => Math.hypot(r.x, r.y))) };
+}
+
 // Coarse scan then refine, so a short LEO pass is not stepped over.
 export function nextPass(satrec, station, from, minEl = 5, horizonHours = 72) {
   const stepMs = 30000;
