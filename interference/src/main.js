@@ -137,6 +137,7 @@ function renderIq(r) {
 
 function renderLesson(r) {
   $('lessonText').setAttribute('aria-live', S.mode === 'sandbox' ? 'off' : 'polite'); // Sandbox text changes with every sweep frame.
+  suite.spotlight(S.mode === 'learn' ? LESSONS[S.lesson].show : []); // Diagnose must not point at the answer.
   if (S.mode === 'sandbox') {
     const a = r.sites.A;
     $('lessonHead').textContent = 'Sandbox';

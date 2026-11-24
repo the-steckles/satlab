@@ -8,7 +8,7 @@ export const KINDS = {
   spur: { name: 'Other spur', color: '#8a8f2a' },
 };
 
-const M = { l: 56, r: 12, t: 12, b: 40 };
+export const M = { l: 56, r: 12, t: 12, b: 40 };
 const mhzText = (hz, step) => (hz / 1e6).toFixed(step >= 1e6 ? 0 : step >= 1e5 ? 1 : 2);
 
 // Repeatable noise, so the trace does not shimmer when nothing has changed.
@@ -48,13 +48,22 @@ export function drawSpectrum(canvas, { list, loHz, hiHz, topDbm, bottomDbm, floo
   ctx.beginPath();
   ctx.rect(M.l, M.t, pw, ph);
   ctx.clip();
-  const noiseFloorAt = noiseAt, hzAt = (px) => loHz + (px / pw) * (hiHz - loHz);
+  const noiseFloorAt = noiseAt;
   ctx.strokeStyle = '#4b5b67';
   ctx.beginPath();
-  for (let px = 0; px <= pw; px += 2) {
+  // Like an analyzer's peak detector, each point shows the highest level in its slice of frequency, so a
+  // filter passband narrower than a pixel still shows, and every product's line meets the trace.
+  // Points sit on fixed frequency bins and draw their noise from the bin number, so dragging moves the noise
+  // with the signals instead of sliding the signals over a frozen pattern.
+  const bucket = ((hiHz - loHz) / pw) * 2;
+  for (let bin = Math.floor(loHz / bucket), first = true; bin * bucket <= hiHz + bucket; bin++, first = false) {
+    const hz = bin * bucket, a = hz - bucket / 2, px = X(hz) - M.l;
+    let level = -Infinity, signal = -Infinity;
+    for (let k = 0; k <= 8; k++) level = Math.max(level, noiseFloorAt(a + (k / 8) * bucket));
+    for (const p of list) if (p.hz >= a && p.hz < a + bucket) { level = Math.max(level, noiseFloorAt(p.hz)); signal = Math.max(signal, p.dbm); }
     // Log-detected noise averages about 2.5 dB below its power level and has a long low tail.
-    const y = Y(noiseFloorAt(hzAt(px)) - 2.5 + 10 * Math.log10(-Math.log(Math.max(1e-3, randomAt(px)))));
-    if (px) ctx.lineTo(M.l + px, y); else ctx.moveTo(M.l + px, y);
+    const y = Y(Math.max(signal, level - 2.5 + 10 * Math.log10(-Math.log(Math.max(1e-3, randomAt(bin))))));
+    if (first) ctx.moveTo(M.l + px, y); else ctx.lineTo(M.l + px, y);
   }
   ctx.stroke();
 
@@ -82,14 +91,28 @@ export function drawSpectrum(canvas, { list, loHz, hiHz, topDbm, bottomDbm, floo
   // Label the strongest products that fit, and leave the rest to hover and the table.
   ctx.fillStyle = C.text;
   ctx.textAlign = 'center';
-  const placed = [];
-  for (const p of visible) {
+  // Products a few pixels apart draw as one line, so name them all rather than letting one hide the rest.
+  const sameLine = (p) => visible.filter((q) => q !== p && Math.abs(X(q.hz) - X(p.hz)) < 4);
+  const placed = [], named = new Set();
+  for (const p of [...visible].sort((a, b) => b.dbm - a.dbm)) {
     if (placed.length >= 7) break;
-    const width = ctx.measureText(p.label).width + 8, x = Math.max(M.l + width / 2, Math.min(M.l + pw - width / 2, X(p.hz)));
-    const y = Math.max(M.t + 11, Y(p.dbm) - 5);
-    if (placed.some((b) => Math.abs(b.x - x) < (b.width + width) / 2 && Math.abs(b.y - y) < 13)) continue;
-    placed.push({ x, y, width });
-    ctx.fillText(p.label, x, y);
+    if (named.has(p)) continue;
+    const group = [p, ...sameLine(p).filter((q) => !named.has(q))];
+    group.forEach((q) => named.add(q));
+    const text = group.length === 1 ? p.label : group.length === 2 ? group.sort((a, b) => a.hz - b.hz).map((q) => q.label).join(', ') : `${p.label} +${group.length - 1}`;
+    const width = ctx.measureText(text).width + 8, top = Math.max(M.t + 11, Y(p.dbm) - 5);
+    // Lean away from a close neighbour, so a pair reads "left name | right name" on one row. Otherwise try
+    // centered, then either side, then a row higher, so close neighbours each keep a name.
+    const near = visible.filter((q) => !group.includes(q) && Math.abs(X(q.hz) - X(p.hz)) < width);
+    const right = near.some((q) => q.hz > p.hz), left = near.some((q) => q.hz < p.hz);
+    const sides = right && !left ? [-1, 0, 1] : left && !right ? [1, 0, -1] : [0, -1, 1];
+    const spot = [0, 13, 26].flatMap((up) => sides.map((side) => ({
+      x: Math.max(M.l + width / 2, Math.min(M.l + pw - width / 2, X(p.hz) + side * (width / 2 - 4))),
+      y: Math.max(M.t + 11, top - up),
+    }))).find((s) => !placed.some((b) => Math.abs(b.x - s.x) < (b.width + width) / 2 && Math.abs(b.y - s.y) < 13));
+    if (!spot) continue;
+    placed.push({ ...spot, width });
+    ctx.fillText(text, spot.x, spot.y);
   }
   ctx.restore();
 
@@ -114,6 +137,9 @@ export function drawSpectrum(canvas, { list, loHz, hiHz, topDbm, bottomDbm, floo
     ctx.lineWidth = 1;
     const rows = [hit.label, `${(hit.hz / 1e6).toFixed(3)} MHz`, `${hit.dbm.toFixed(1)} dBm`, KINDS[hit.kind].name];
     if (hit.parts.length > 1) rows.push(`${hit.parts.length} products overlap`);
+    const others = sameLine(hit).sort((a, b) => b.dbm - a.dbm);
+    if (others.length) rows.push('Also on this line, zoom in to separate:', ...others.slice(0, 5).map((q) => `${q.label}  ${(q.hz / 1e6).toFixed(3)} MHz  ${q.dbm.toFixed(1)} dBm`));
+    if (others.length > 5) rows.push(`and ${others.length - 5} more`);
     const bw = Math.max(...rows.map((r) => ctx.measureText(r).width)) + 14, bh = rows.length * 15 + 8;
     const bx = x + bw + 12 > w - M.r ? x - bw - 10 : x + 10, by = Math.max(M.t + 2, Math.min(M.t + ph - bh - 2, y - bh / 2));
     ctx.fillStyle = '#141c24';

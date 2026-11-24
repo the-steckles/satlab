@@ -141,6 +141,36 @@
       </dl>
     </section>
     <p class="note">A simulator with a fictional satellite, random symbols and locally drawn pictures. It generates no real DVB-S2 signal and has no transmit path. Unauthorized transmission to a satellite is illegal.</p>
+    <section class="sources" id="sourcesBox">
+      <details>
+        <summary>Sources and further reading</summary>
+        <p class="note">Open references for the ideas in this lab. The simulator simplifies all of them.</p>
+        <dl>
+          <dt>Inspiration for this lab</dt>
+          <dd><a href="https://youtu.be/Ouyln7CeWJU?t=1146">James Pavur, “Space Jam: Exploring Radio Frequency Attacks in Outer Space,” DEF CON 30, 2022</a>. The linked section covers taking over a DVB-S2 signal.</dd>
+          <dt>DVB-S2 frames, PLHEADER and MODCODs</dt>
+          <dd><a href="https://www.etsi.org/deliver/etsi_en/302300_302399/30230701/01.04.01_60/en_30230701v010401p.pdf">ETSI EN 302 307-1 V1.4.1, the DVB-S2 standard, 2014 (PDF)</a>.</dd>
+          <dt>MER and monitoring</dt>
+          <dd><a href="https://www.etsi.org/deliver/etsi_tr/101200_101299/101290/01.04.01_60/tr_101290v010401p.pdf">ETSI TR 101 290 V1.4.1, Measurement guidelines for DVB systems, 2020 (PDF)</a>.</dd>
+          <dt>Why total power barely moves</dt>
+          <dd><a href="https://ntrs.nasa.gov/api/citations/20080023297/downloads/20080023297.pdf">Robert Peters and Peter Woolner, “Analytic Calculation of Noise Power Robbing, NPR, and Polarization Isolation Degradation,” AIAA (NASA NTRS, PDF)</a>.</dd>
+          <dt>Content authentication</dt>
+          <dd>DVB-S2 does not authenticate what it carries, so the defense step shows the general idea. ATSC 3.0 broadcast TV is a real standard that signs its signaling and apps for the receiver to check.</dd>
+          <dd><a href="https://www.atsc.org/atsc-documents/3602018-atsc-3-0-security-service-protection/">ATSC A/360, “ATSC 3.0 Security and Service Protection”</a>.</dd>
+          <dd><a href="https://www.atsc.org/news/security-content-protection-high-priorities-for-nextgen-tv/">ATSC, “Security, Content Protection High Priorities for NEXTGEN TV”</a>. Why broadcast signaling is signed.</dd>
+          <dd><a href="https://people.eecs.berkeley.edu/~tygar/papers/Efficient_authentication_signing_multicast.pdf">Adrian Perrig, Ran Canetti, J. D. Tygar and Dawn Song, “Efficient Authentication and Signing of Multicast Streams over Lossy Channels,” 2000 (PDF)</a>. TESLA, a way to authenticate a one-way broadcast. <a href="https://www.rfc-editor.org/rfc/rfc4082.html">RFC 4082</a> describes it.</dd>
+          <dd><a href="https://www.euspa.europa.eu/galileo-osnma">EUSPA, “Galileo Open Service Navigation Message Authentication (OSNMA)”</a>. A satellite broadcast that signs its data using TESLA.</dd>
+          <dt>Carrier ID</dt>
+          <dd><a href="https://etsi.org/deliver/etsi_TS/103100_103199/103129/01.01.01_60/ts_103129v010101p.pdf">ETSI TS 103 129 V1.1.1, Carrier identification system (DVB-CID), 2013 (PDF)</a>.</dd>
+          <dt>A real takeover, before DVB-S2</dt>
+          <dd><a href="https://en.wikipedia.org/wiki/Captain_Midnight_broadcast_signal_intrusion">Wikipedia, “Captain Midnight broadcast signal intrusion”</a>. The 1986 analog overlay of HBO, and how the FCC traced it.</dd>
+          <dt>Finding the source and reporting it</dt>
+          <dd><a href="https://en.wikipedia.org/wiki/Satellite_geolocation">Wikipedia, “Satellite geolocation”</a>.</dd>
+          <dd><a href="https://www.itu.int/en/mediacentre/backgrounders/Pages/radio-interference.aspx">ITU, “Preventing harmful radio interference”</a>.</dd>
+          <dd><a href="https://www.microwavejournal.com/articles/18088-tackling-satellite-interference">Martin Coleman (sIRG), “Tackling Satellite Interference,” Microwave Journal, 2012</a>.</dd>
+        </dl>
+      </details>
+    </section>
   </div>
 </main>
 <script type="module" src="./src/main.js"></script>

@@ -138,7 +138,7 @@ export function backoffCurve(params, points = 61) {
     const yours = lin(base.p.sfdDbWm2 - iboDb) - neighbors;
     if (yours <= 0) continue;
     const b = budget({ ...base.p, txPowerW: base.p.txPowerW * (yours / lin(base.fluxDbWm2)) });
-    rows.push({ iboDb, oboDb: b.oboDb, up: b.cn0UpDbHz - dB(base.p.rsMsps * 1e6), down: b.cn0DownDbHz - dB(base.p.rsMsps * 1e6), im: Math.min(b.cimDb, b.distortionDb), esN0: b.esN0Db });
+    rows.push({ iboDb, oboDb: b.oboDb, up: b.cn0UpDbHz - dB(base.p.rsMsps * 1e6), down: b.cn0DownDbHz - dB(base.p.rsMsps * 1e6), im: b.cimDb, dist: b.distortionDb, esN0: b.esN0Db });
   }
   // Neighbors alone can overdrive a low-SFD transponder past this plot, leaving no reachable point.
   if (!rows.length) return { rows, best: null, bestAtEdge: true, operatingIbo: base.iboDb };

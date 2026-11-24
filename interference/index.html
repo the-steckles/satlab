@@ -201,6 +201,40 @@
       <div class="legend" id="powerLegend"></div>
       <p class="note" id="powerNote"></p>
     </section>
+    <section class="sources" id="sourcesBox">
+      <details>
+        <summary>Sources and further reading</summary>
+        <p class="note">Open references for the ideas in this lab. The simulator simplifies all of them.</p>
+        <dl>
+          <dt>Interference types operators see</dt>
+          <dd><a href="https://www.microwavejournal.com/articles/18088-tackling-satellite-interference">Martin Coleman (sIRG), “Tackling Satellite Interference,” Microwave Journal, 2012</a>. Cross-polarization, adjacent satellites, carriers that collapse to CW, carrier ID and geolocation.</dd>
+          <dd><a href="https://www.itu.int/en/ITU-R/space/workshops/2013-interference-geneva/presentations/Martin%20Coleman%20-%20sIRG%20CID%20-%20Databases%20-%20Working%20Groups%20-%20Jamming.pdf">sIRG, “Satellite Interference! Jamming, Carrier ID and Working Groups,” ITU workshop, Geneva, 2013 (PDF)</a>.</dd>
+          <dd><a href="https://web.archive.org/web/20260113153024/https://www.intelsat.com/wp-content/uploads/2020/04/intelsatgeneral-satellite-interference-vsat-whitepaper.pdf">Intelsat General, “Adjacent Satellite Interference in Mobile/VSAT Environments,” white paper (Internet Archive copy, PDF)</a>. Why small and mispointed dishes see neighboring satellites.</dd>
+          <dt>Interference and jamming waveforms</dt>
+          <dd><a href="https://insidegnss.com/listening-for-rf-noise/">Inside GNSS, “Listening for RF Noise”</a>. Wideband, partial-band, narrowband, CW and swept interference, and how each looks on a spectrogram.</dd>
+          <dd><a href="https://web.archive.org/web/20260719003225/https://www.emsopedia.org/entries/swept-jamming-against-radio-communications/">EMSOPEDIA, “Swept Jamming against Radio Communications” (Internet Archive copy, the site is offline)</a>.</dd>
+          <dd><a href="https://en.wikipedia.org/wiki/Radio_jamming">Wikipedia, “Radio jamming”</a>.</dd>
+          <dd><a href="https://www.keysight.com/content/dam/keysight/en/doc/gate/white-papers/GNSS-Jamming.pdf">Keysight, “GNSS Jamming: How to Test the Risks to Safety-Critical and Liability-Critical Systems,” white paper (PDF)</a>. CW, chirp and pulsed jammer signals.</dd>
+          <dd><a href="https://www.cydcampus.admin.ch/dam/it/sd-web/y0DIqoC4Tj4Z/3734477.3734714.pdf">Edd Salkield, Sebastian Köhler, Simon Birnbach, Martin Strohmeier et al. (University of Oxford), “Space Jam: Protocol-aware Jamming Attacks against Space Communications,” 2025 (PDF)</a>. Compares noise and tone jamming with jamming that targets a protocol.</dd>
+          <dd><a href="https://youtu.be/Ouyln7CeWJU">James Pavur, “Space Jam: Exploring Radio Frequency Attacks in Outer Space,” DEF CON 30, 2022</a>. Jamming, spoofing and signal takeover.</dd>
+          <dt>Power robbing and polarization isolation</dt>
+          <dd><a href="https://ntrs.nasa.gov/api/citations/20080023297/downloads/20080023297.pdf">Robert Peters and Peter Woolner, “Analytic Calculation of Noise Power Robbing, NPR, and Polarization Isolation Degradation,” AIAA (NASA NTRS, PDF)</a>.</dd>
+          <dt>Transponder ALC</dt>
+          <dd><a href="https://www.microwavejournal.com/articles/1154-design-and-temperature-compensation-of-a-ku-band-channel-amplifier-with-alc-for-a-satellite-transponder">S.C. Bera, R.V. Singh and V.K. Garg (ISRO), “Design and Temperature Compensation of a Ku-band Channel Amplifier with ALC for a Satellite Transponder,” Microwave Journal, 2006</a>.</dd>
+          <dt>Rain fade</dt>
+          <dd><a href="https://www.itu.int/dms_pubrec/itu-r/rec/p/R-REC-P.618-14-202308-I!!PDF-E.pdf">Recommendation ITU-R P.618-14, Propagation data and prediction methods for Earth-space systems, 2023 (PDF)</a>.</dd>
+          <dt>IQ plots and MER</dt>
+          <dd><a href="https://www.etsi.org/deliver/etsi_tr/101200_101299/101290/01.04.01_60/tr_101290v010401p.pdf">ETSI TR 101 290 V1.4.1, Measurement guidelines for DVB systems, 2020 (PDF)</a>.</dd>
+          <dd><a href="https://www.keysight.com/us/en/assets/7018-01305/application-notes/5989-1383.pdf">Keysight, “Making and Interpreting EVM Measurements” (PDF)</a>.</dd>
+          <dt>Carrier ID</dt>
+          <dd><a href="https://etsi.org/deliver/etsi_TS/103100_103199/103129/01.01.01_60/ts_103129v010101p.pdf">ETSI TS 103 129 V1.1.1, Carrier identification system (DVB-CID), 2013 (PDF)</a>.</dd>
+          <dt>Finding the source</dt>
+          <dd><a href="https://en.wikipedia.org/wiki/Satellite_geolocation">Wikipedia, “Satellite geolocation”</a>. How operators locate an uplink with two satellites.</dd>
+          <dt>Reporting and the law</dt>
+          <dd><a href="https://www.itu.int/en/mediacentre/backgrounders/Pages/radio-interference.aspx">ITU, “Preventing harmful radio interference”</a>. Reporting through your regulator, and why jamming is prohibited.</dd>
+        </dl>
+      </details>
+    </section>
   </div>
 </main>
 <script type="module" src="./src/main.js"></script>

@@ -57,43 +57,43 @@ const config = (over) => ({ lnbPower: true, freqMHz: 1750, rsMsps: 5, inverted: 
 
 export const TICKETS = [
   {
-    title: 'New site, nothing on the modem',
+    title: 'New site, nothing on the modem', show: ['modemState', 'spectrum'],
     story: 'An installer finished a new site and reports that the dish is peaked. The modem has never locked.',
     signal: carrier(), start: config({ lnbPower: false, freqMHz: 1751 }),
     fixed: 'The LNB draws its power up the coax from the modem. With DC off, nothing arrives, so nothing else can be judged yet. Check LNB power first, because it is quick and common.',
   },
   {
-    title: 'Carrier is on the analyzer, modem is searching',
+    title: 'Carrier is on the analyzer, modem is searching', show: ['sRf', 'spectrum', 'modemState'],
     story: 'The work order gives the carrier’s RF frequency. The modem was set up from a template used at another site.',
     signal: carrier(), start: config({ freqMHz: 1250 }),
     fixed: 'L-band is RF minus LO: 12500 − 10750 = 1750 MHz. A value copied from another site’s LO is one of the most common reasons a carrier will not lock.',
   },
   {
-    title: 'It worked until the LNB was replaced',
+    title: 'It worked until the LNB was replaced', show: ['spectrum', 'modemState'],
     story: 'A narrow carrier locked for months, then dropped the day a technician swapped the LNB.',
     signal: carrier({ freqMHz: 1751.5, rsMsps: 2 }), start: config({ rsMsps: 2 }),
     fixed: 'An LNB’s LO can be off by a megahertz or more, and a narrow carrier has a narrow search range. Retune to the true center on the analyzer, then watch it for a while. A drifting LO needs a better LNB or a locked reference.',
   },
   {
-    title: 'Right frequency, still searching',
+    title: 'Right frequency, still searching', show: ['freqMHz', 'rsMsps', 'spectrum'],
     story: 'The modem matches the work order, and the carrier sits inside the search band.',
     signal: carrier({ rsMsps: 7.5 }), start: config(),
     fixed: 'The −3 dB width equals the symbol rate at any roll-off, here about 7.5 MHz. Occupied width depends on roll-off, so it is a weaker estimate. Confirm the value with whoever transmits the carrier.',
   },
   {
-    title: 'A C-band site that will not lock',
+    title: 'A C-band site that will not lock', show: ['freqMHz', 'rsMsps', 'mLevel'],
     story: 'Frequency and symbol rate match the work order for this C-band carrier, and the level is healthy.',
     signal: carrier({ rfMHz: 3950, loMHz: 5150, freqMHz: 1200 }), start: config({ freqMHz: 1200 }),
     fixed: 'When the LO is above the RF, L-band equals LO minus RF, so higher RF becomes lower L-band and the spectrum is flipped. C-band LNBs commonly use a 5150 MHz LO. Many modems detect this automatically, but one set manually must match.',
   },
   {
-    title: 'No data during a storm',
+    title: 'No data during a storm', show: ['modemState', 'mEs', 'mModcod'],
     story: 'It is raining hard at this site, and customers report no data. Find what the modem can still tell you.',
     signal: carrier({ esN0Db: 9.5, floorDbm: SITE_FLOOR_DBM + 1 }), start: config({ modcod: '16APSK 3/4' }),
     fixed: 'The demodulator reads the MODCOD from the PLHEADER, so you do not set it here. With Es/N0 this low, FEC is failing because quality is below that MODCOD’s threshold. At a good Es/N0, suspect a stream or scrambling mismatch instead. Ask the transmit side for a more robust MODCOD, or restore the margin. Demod lock does not prove this is the right carrier, so verify its identity too.',
   },
   {
-    title: 'Two things wrong',
+    title: 'Two things wrong', show: ['checkBox', 'modemState'],
     story: 'A C-band site was rebuilt from an old Ku-band configuration. Fix one problem at a time and watch which check fails next.',
     signal: carrier({ rfMHz: 3950, loMHz: 5150, freqMHz: 1200 }), start: config({ freqMHz: 1100 }),
     fixed: 'The modem can only report the first thing stopping it. Fixing the frequency revealed the spectral sense problem. That is why you work the checks in order.',

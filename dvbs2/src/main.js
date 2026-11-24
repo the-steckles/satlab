@@ -127,6 +127,7 @@ function renderLesson() {
   $('lessonBack').disabled = S.lesson === 0;
   $('lessonNext').disabled = S.lesson === LESSONS.length - 1;
   suite.related(S.rampView ? null : lesson.see, !S.rampView && S.lesson === LESSONS.length - 1);
+  suite.spotlight(S.rampView ? ['iq', 'decoded', 'rxState'] : lesson.show); // Ramp captions describe the receiver.
 }
 
 function syncControls() {

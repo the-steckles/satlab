@@ -43,7 +43,11 @@
   .plotHead label { display:flex; align-items:center; gap:5px; margin:0; }
   .plotHead select { width:auto; margin:0; padding:3px 5px; }
   canvas { display:block; width:100%; border-radius:3px; touch-action:pan-y; }
-  #spectrum { height:400px; }
+  #spectrum { height:400px; cursor:grab; }
+  .specControls { display:grid; grid-template-columns:repeat(4, 1fr); gap:6px 8px; }
+  .specButtons { display:flex; flex-wrap:wrap; gap:6px; margin:6px 0; }
+  .specButtons button { width:auto; flex:1 1 auto; margin:0; }
+  @media (max-width:600px) { .specControls { grid-template-columns:1fr 1fr; } }
   #slope { height:280px; }
   #plan { height:130px; }
   #filterPlot { height:210px; }
@@ -127,11 +131,18 @@
     <section id="specBox">
       <div class="plotHead">
         <h2 id="specTitle">Spectrum</h2>
-        <label>View <select id="span"><option value="all">All products</option><option value="near">Around carrier</option></select></label>
         <label>RBW <select id="rbw"><option value="10000">10 kHz</option><option value="100000" selected>100 kHz</option><option value="1000000">1 MHz</option></select></label>
       </div>
+      <div class="specControls">
+        <label>Center (MHz)<input id="specCenter" type="number" min="0" max="100000" step="any" /></label>
+        <label>Span (MHz)<input id="specSpan" type="number" min="0.1" max="100000" step="any" /></label>
+        <label>Ref level (dBm)<input id="specRef" type="number" min="-200" max="100" step="10" /></label>
+        <label>Range (dB)<input id="specRange" type="number" min="20" max="250" step="10" /></label>
+      </div>
+      <div class="specButtons"><button id="viewAll">Fit all products</button><button id="viewNear">Around carrier</button><button id="viewLevel">Auto level</button></div>
       <canvas id="spectrum" role="img" aria-label="Spectrum of the signal at the chosen test point, with each mixing product labeled"></canvas>
       <div class="legend" id="legend"></div>
+      <p class="note">Drag the spectrum to move it, and scroll over it or change Span to zoom. Like a real analyzer, the settings hold as you click through test points, and every test point shares one level scale. If crossing the mixer takes the carrier off screen, the view follows it to its new frequency.</p>
     </section>
     <section id="filterBox">
       <h2>Filter response</h2>

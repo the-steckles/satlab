@@ -7,6 +7,7 @@ import { BACKOFF_MAX_DB, BACKOFF_MIN_DB, backoffCurve, bestModcod, budget, DEFAU
 const suite = mountSuite('linkbudget', { jumps: [['lessonBox', 'Lesson'], ['ladderBox', 'Levels'], ['resultBox', 'Result'], ['controlsStart', 'Controls']] });
 const $ = (id) => document.getElementById(id);
 const S = { p: { ...DEFAULTS }, lesson: 0 };
+const ACCENT = '#4fe0c0';
 const num = (v, unit = 'dB', d = 1) => (Number.isFinite(v) ? `${v.toFixed(d).replace('-', '−')} ${unit}`.trim() : '–');
 
 const GROUPS = [
@@ -73,19 +74,21 @@ function drawLadder(b) {
   stages.forEach((s, i) => { if (i) ctx.lineTo(X(i), Y(s[1])); else ctx.moveTo(X(i), Y(s[1])); });
   ctx.stroke();
   ctx.lineWidth = 1;
-  const narrow = pw / stages.length < 86;
+  const narrow = pw / stages.length < 86, spot = LESSONS[S.lesson].show ?? [];
   stages.forEach((s, i) => {
+    const named = spot.includes(`stage:${s[0]}`);
+    if (named) { ctx.strokeStyle = ACCENT; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(X(i), Y(s[1]), 10, 0, Math.PI * 2); ctx.stroke(); }
     ctx.fillStyle = '#0f9c7e';
     ctx.strokeStyle = C.bg;
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(X(i), Y(s[1]), 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
     ctx.lineWidth = 1;
-    ctx.fillStyle = C.text;
+    ctx.fillStyle = named ? ACCENT : C.text;
     ctx.textAlign = 'center';
     // Valley labels go under the point, clear of the two lines meeting there.
     const valley = i > 0 && i < stages.length - 1 && s[1] < stages[i - 1][1] && s[1] < stages[i + 1][1];
-    ctx.fillText(s[1].toFixed(1).replace('-', '−'), X(i), Y(s[1]) + (valley ? 17 : -9));
-    ctx.fillStyle = C.axis;
+    ctx.fillText(s[1].toFixed(1).replace('-', '−'), X(i), Y(s[1]) + (valley ? 17 : -9) + (named ? (valley ? 5 : -5) : 0));
+    ctx.fillStyle = named ? ACCENT : C.axis;
     const words = narrow ? s[0].split(' ') : [s[0]];
     words.forEach((word, row) => ctx.fillText(word, X(i), h - 25 + row * 13));
   });
@@ -105,7 +108,7 @@ function drawBackoff(b) {
     return;
   }
   const m = { l: 44, r: 14, t: 12, b: 36 }, pw = w - m.l - m.r, ph = h - m.t - m.b;
-  const hi = Math.ceil(Math.min(40, Math.max(...rows.flatMap((r) => [r.up, r.down, Number.isFinite(r.im) ? r.im : -Infinity]))) / 5) * 5;
+  const hi = Math.ceil(Math.min(40, Math.max(...rows.flatMap((r) => [r.up, r.down, r.im, r.dist].filter(Number.isFinite)))) / 5) * 5;
   const lo = Math.floor(Math.max(hi - 35, Math.min(...rows.map((r) => r.esN0))) / 5) * 5;
   const X = (v) => m.l + ((v - BACKOFF_MIN_DB) / (BACKOFF_MAX_DB - BACKOFF_MIN_DB)) * pw, Y = (v) => m.t + ((hi - v) / (hi - lo)) * ph;
   ctx.strokeStyle = C.grid;
@@ -117,10 +120,19 @@ function drawBackoff(b) {
   for (const v of ticks(BACKOFF_MIN_DB, BACKOFF_MAX_DB, Math.max(3, Math.floor(pw / 60))).values) { const x = Math.round(X(v)) + 0.5; ctx.moveTo(x, m.t); ctx.lineTo(x, m.t + ph); ctx.fillText(`${v}`, x, h - 21); }
   ctx.stroke();
   ctx.fillText('Input backoff (dB)', m.l + pw / 2, h - 6);
-  verticalLabel(ctx, 'dB in symbol rate', 11, m.t + ph / 2);
+  verticalLabel(ctx, 'C/N in symbol rate (dB)', 11, m.t + ph / 2);
   ctx.save();
   ctx.beginPath(); ctx.rect(m.l, m.t, pw, ph); ctx.clip();
-  const series = [['up', '#5f7df0', 2], ['down', '#c9780f', 2], ['im', '#d0559a', 2], ['esN0', '#dbe5ea', 3]];
+  // Past the last reachable backoff the other carriers alone drive the tube harder, so your carrier would need no power.
+  const last = rows.at(-1).iboDb;
+  if (last < BACKOFF_MAX_DB - 0.5) {
+    ctx.fillStyle = 'rgba(255,255,255,0.04)';
+    ctx.fillRect(X(last), m.t, m.l + pw - X(last), ph);
+    ctx.fillStyle = C.axis;
+    ctx.textAlign = 'left';
+    ['The other carriers alone', `already drive it to ${num(last)} backoff,`, 'so you cannot back off further'].forEach((t, i) => ctx.fillText(t, X(last) + 8, m.t + 16 + i * 14));
+  }
+  const series = [['up', '#5f7df0', 2], ['down', '#c9780f', 2], ['im', '#d0559a', 2], ['dist', '#8a8f2a', 2], ['esN0', '#dbe5ea', 3]];
   for (const [key, color, width] of series) {
     ctx.strokeStyle = color;
     ctx.lineWidth = width;
@@ -190,6 +202,10 @@ function renderLesson(b) {
   suite.related(lesson.see, S.lesson === LESSONS.length - 1);
 }
 
+// Table rows are named by their label, and chart points ("stage:") are ringed in drawLadder instead.
+const spotTargets = (keys = []) => keys.filter((k) => !k.startsWith('stage:'))
+  .map((k) => (k.startsWith('row:') ? [...$('table').rows].find((tr) => tr.cells[0].textContent === k.slice(4)) : k));
+
 function render() {
   const b = budget(S.p);
   syncControls();
@@ -198,6 +214,7 @@ function render() {
   drawBackoff(b);
   renderResult(b);
   renderLesson(b);
+  suite.spotlight(spotTargets(LESSONS[S.lesson].show));
 }
 
 function applyLesson(index) {

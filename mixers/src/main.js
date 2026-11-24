@@ -1,11 +1,11 @@
 import { LESSONS } from './lessons.js';
 import { amplifierBackoff, filterEdges, filterLossAtDb, filterSettings, loForProduct, noiseFloorDbm, noiseProfile, PRODUCTS, runScene, SCENES, summarize, sweep, wantedMHz } from './model.js';
-import { drawFilter, drawPlan, drawSlope, drawSpectrum, KINDS } from './plots.js';
+import { drawFilter, drawPlan, drawSlope, drawSpectrum, KINDS, M } from './plots.js';
 import { mountSuite, parseLesson, writeLesson } from '../../lib/suite.js';
 
 const $ = (id) => document.getElementById(id);
 const suite = mountSuite('mixers', { jumps: [['lessonBox', 'Lesson'], ['chainBox', 'Chain'], ['specBox', 'Spectrum'], ['signalBox', 'Controls']] });
-const S = { sceneId: 'bench', params: {}, saved: {}, filterId: null, nodeIndex: 1, span: 'all', rbw: 100000, lesson: 0, result: null, hoverX: null, slope: null, slopeKey: '', slopeTimer: 0 };
+const S = { sceneId: 'bench', params: {}, saved: {}, filterId: null, nodeIndex: 1, span: 'all', view: null, refDbm: 0, rangeDb: 100, drag: null, rbw: 100000, lesson: 0, result: null, hoverX: null, slope: null, slopeKey: '', slopeTimer: 0 };
 const NUMBERS = ['rfMHz', 'loMHz', 'spacingMHz'], RANGES = ['rfDbm', 'loDbm', 'imageDbm'], CHECKS = ['twoTone', 'unevenTones', 'imageOn', 'filtersOn', 'holdOutput'];
 const dbText = (v, unit = 'dB') => (v === null || v === undefined || !Number.isFinite(v) ? '–' : `${v.toFixed(1).replace('-', '−')} ${unit}`);
 
@@ -21,7 +21,6 @@ function syncControls() {
   $('imageWrap').hidden = !!scene.noLo || !!scene.noImage;
   $('imageLevelWrap').hidden = !p.imageOn;
   $('spacingWrap').hidden = !p.twoTone;
-  $('span').value = S.span;
 }
 
 // Each option shows its result, and is disabled when no positive frequency or LO exists.
@@ -99,15 +98,52 @@ function renderChain() {
   $('stageNote').textContent = stage ? `${stage.name}: ${stage.about}` : S.result.scene.intro;
 }
 
-function plotRange(node, floor) {
-  const r = S.result, p = r.params;
-  const shown = node.products.filter((x) => x.dbm > floor);
-  if (S.span === 'near') {
-    const center = (node.pastMixer ? r.wantedMHz : p.rfMHz) * 1e6, half = Math.max(5e6, (p.twoTone ? 8 : 4) * p.spacingMHz * 1e6);
-    return [Math.max(0, center - half), center + half];
+const clampView = (centerHz, spanHz) => {
+  const span = Math.min(1e11, Math.max(1e5, spanHz));
+  return { centerHz: Math.min(1e11, Math.max(span / 2, centerHz)), spanHz: span };
+};
+
+const carrierHz = (side) => (side ? S.result.wantedMHz : S.result.params.rfMHz) * 1e6;
+const sideOf = (index) => !!S.result.nodes[index].pastMixer;
+
+// One window for the whole chain. "Fit all" covers every test point, so stepping through stages never moves it.
+function presetView(kind) {
+  const r = S.result, p = r.params, side = sideOf(S.nodeIndex);
+  S.span = kind;
+  if (kind === 'near') {
+    const half = Math.max(5e6, (p.twoTone ? 8 : 4) * p.spacingMHz * 1e6);
+    S.view = { ...clampView(carrierHz(side), 2 * half), side };
+  } else {
+    const top = 1.06 * Math.max(1e6, ...r.nodes.flatMap((n) => n.products.filter((x) => x.dbm > noiseFloorDbm(n, S.rbw)).map((x) => x.hz)));
+    S.view = { ...clampView(top / 2, top), side };
   }
-  const top = Math.max(1e6, ...shown.map((x) => x.hz));
-  return [0, top * 1.06];
+}
+
+// Crossing the mixer moves the carrier. Retune only if it left the screen, keeping its offset from center
+// (mirrored when the mixer inverts the spectrum), as an operator would.
+function crossMixer(side) {
+  const v = S.view, from = carrierHz(v.side), to = carrierHz(side);
+  S.view = { ...v, side };
+  if (Math.abs(to - v.centerHz) < v.spanHz / 2) return;
+  S.view = { ...clampView(to + (S.result.inverted ? -1 : 1) * (v.centerHz - from), v.spanHz), side };
+}
+
+// One level scale for the whole chain, so a stage's gain shows as the trace rising, not the axis moving.
+function autoLevel() {
+  let strongest = -Infinity, lowest = Infinity;
+  S.result.nodes.forEach((node, i) => {
+    const floor = noiseFloorDbm(node, S.rbw);
+    strongest = Math.max(strongest, Math.max(floor, noiseProfile(S.result, i, S.rbw).peakDbm) + 20, ...node.products.map((x) => x.dbm));
+    lowest = Math.min(lowest, floor);
+  });
+  S.refDbm = Math.ceil((strongest + 8) / 10) * 10;
+  S.rangeDb = Math.max(80, S.refDbm - Math.floor((lowest - 12) / 10) * 10);
+}
+
+const currentView = () => S.view;
+function setView(centerHz, spanHz) {
+  S.view = { ...clampView(centerHz, spanHz), side: S.view.side };
+  renderSpectrum();
 }
 
 const mhzLabel = (v) => +v.toFixed(3);
@@ -142,13 +178,13 @@ function setFilter(change) {
 function renderSpectrum() {
   const node = S.result.nodes[S.nodeIndex];
   const floorDbm = noiseFloorDbm(node, S.rbw), noise = noiseProfile(S.result, S.nodeIndex, S.rbw);
-  const strongest = Math.max(Math.max(floorDbm, noise.peakDbm) + 20, ...node.products.map((x) => x.dbm));
-  const topDbm = Math.ceil((strongest + 8) / 10) * 10;
-  const bottomDbm = Math.min(topDbm - 80, Math.floor((floorDbm - 12) / 10) * 10);
-  const [loHz, hiHz] = plotRange(node, floorDbm);
+  const view = currentView(), loHz = view.centerHz - view.spanHz / 2, hiHz = view.centerHz + view.spanHz / 2;
   const noiseAt = (hz) => noise.at(Math.max(1e-3, hz / 1e6));
-  drawSpectrum($('spectrum'), { list: node.products, loHz, hiHz, topDbm, bottomDbm, floorDbm, noiseAt, hoverX: S.hoverX });
+  drawSpectrum($('spectrum'), { list: node.products, loHz, hiHz, topDbm: S.refDbm, bottomDbm: S.refDbm - S.rangeDb, floorDbm, noiseAt, hoverX: S.hoverX });
   $('specTitle').textContent = `Spectrum at ${node.name}`;
+  for (const [id, v] of [['specCenter', view.centerHz / 1e6], ['specSpan', view.spanHz / 1e6], ['specRef', S.refDbm], ['specRange', S.rangeDb]]) {
+    if (document.activeElement !== $(id)) $(id).value = mhzLabel(v);
+  }
 }
 
 function renderTable(node, s) {
@@ -202,6 +238,14 @@ function renderLesson(node, s) {
   $('lessonBack').disabled = S.lesson === 0;
   $('lessonNext').disabled = S.lesson === list.length - 1;
   suite.related(lesson.see, S.sceneId === 'groundDown' && S.lesson === list.length - 1);
+  // "chain:<stage id>" names a test point button. The input point is first and the last stage's output is last.
+  const points = $('chain').children, stages = S.result.scene.stages;
+  suite.spotlight((lesson.show ?? []).map((k) => {
+    if (!k.startsWith('chain:')) return k;
+    const id = k.slice(6);
+    const at = stages.findIndex((s) => s.id === id);
+    return id === 'input' ? points[0] : id === 'last' ? points[points.length - 1] : at < 0 ? null : points[at + 1];
+  }));
 }
 
 // shortcut: the sweep runs on the main thread after input settles, move it to a Web Worker if it ever causes visible lag.
@@ -222,6 +266,8 @@ function scheduleSlope() {
 function render() {
   S.result = runScene(S.sceneId, S.params);
   S.nodeIndex = Math.min(S.nodeIndex, S.result.nodes.length - 1);
+  if (!S.view) { presetView(S.span); autoLevel(); } // A new lesson or scene sets up the analyzer once.
+  else if (S.view.side !== sideOf(S.nodeIndex)) crossMixer(sideOf(S.nodeIndex));
   const node = S.result.nodes[S.nodeIndex], s = summarize(node);
   syncControls();
   renderChain();
@@ -249,6 +295,7 @@ function applyLesson(index) {
   S.params = lessonParams(S.sceneId, index);
   const lesson = list[index];
   S.span = lesson.span;
+  S.view = null;
   S.nodeIndex = scene.stages.length;
   S.hoverX = null;
   render();
@@ -331,15 +378,48 @@ function wire() {
     render();
   });
   $('mixerType').addEventListener('change', (e) => { S.params.mixerType = e.target.value; render(); });
-  $('span').addEventListener('change', (e) => { S.span = e.target.value; renderSpectrum(); });
+  $('viewAll').addEventListener('click', () => { presetView('all'); renderSpectrum(); });
+  $('viewNear').addEventListener('click', () => { presetView('near'); renderSpectrum(); });
+  $('viewLevel').addEventListener('click', () => { autoLevel(); renderSpectrum(); });
+  for (const id of ['specCenter', 'specSpan', 'specRef', 'specRange']) $(id).addEventListener('change', (e) => {
+    const v = +e.target.value;
+    if (e.target.value === '' || !Number.isFinite(v) || v < +e.target.min || v > +e.target.max) { renderSpectrum(); return; }
+    const view = currentView();
+    if (id === 'specCenter') setView(v * 1e6, view.spanHz);
+    else if (id === 'specSpan') setView(view.centerHz, v * 1e6);
+    else { S[id === 'specRef' ? 'refDbm' : 'rangeDb'] = v; renderSpectrum(); }
+  });
   $('rbw').addEventListener('change', (e) => { S.rbw = +e.target.value; renderSpectrum(); });
   $('reset').addEventListener('click', () => applyLesson(0));
   $('lessonRestore').addEventListener('click', () => applyLesson(S.lesson));
   $('lessonBack').addEventListener('click', () => applyLesson(S.lesson - 1));
   $('lessonNext').addEventListener('click', () => applyLesson(S.lesson + 1));
   const canvas = $('spectrum');
-  for (const type of ['pointerdown', 'pointermove']) canvas.addEventListener(type, (e) => { S.hoverX = e.clientX - canvas.getBoundingClientRect().left; renderSpectrum(); });
-  canvas.addEventListener('pointerleave', () => { S.hoverX = null; renderSpectrum(); });
+  const plotWidth = () => canvas.getBoundingClientRect().width - M.l - M.r;
+  canvas.addEventListener('pointerdown', (e) => {
+    S.drag = { x: e.clientX, centerHz: currentView().centerHz, moved: false };
+    S.hoverX = e.clientX - canvas.getBoundingClientRect().left;
+    renderSpectrum();
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    S.hoverX = e.clientX - canvas.getBoundingClientRect().left;
+    const dx = S.drag && e.buttons ? e.clientX - S.drag.x : 0;
+    if (S.drag && Math.abs(dx) > 4) S.drag.moved = true; // A small wobble is still a tap for the marker.
+    if (S.drag?.moved) {
+      S.hoverX = null;
+      canvas.setPointerCapture(e.pointerId);
+      setView(S.drag.centerHz - (dx / plotWidth()) * currentView().spanHz, currentView().spanHz);
+    } else renderSpectrum();
+  });
+  for (const type of ['pointerup', 'pointercancel']) canvas.addEventListener(type, () => { S.drag = null; });
+  canvas.addEventListener('pointerleave', () => { if (!S.drag) { S.hoverX = null; renderSpectrum(); } });
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    // Zoom around the frequency under the cursor, so the thing you point at stays put.
+    const view = currentView(), frac = (e.clientX - canvas.getBoundingClientRect().left - M.l) / plotWidth();
+    const at = view.centerHz + (Math.min(1, Math.max(0, frac)) - 0.5) * view.spanHz, span = view.spanHz * (e.deltaY > 0 ? 1.25 : 0.8);
+    setView(at + (view.centerHz - at) * (span / view.spanHz), span);
+  }, { passive: false });
   window.addEventListener('resize', () => { renderPlan(); renderSpectrum(); renderFilter(); drawSlope($('slope'), S.slope, S.params.rfDbm); });
 }
 

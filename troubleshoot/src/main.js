@@ -70,6 +70,7 @@ function renderModem() {
   $('lessonNext').disabled = S.ticket === TICKETS.length - 1;
   $('modemState').textContent = STATE_NAMES[r.state];
   $('modemState').className = r.state === 'locked' ? 'good' : r.state === 'fecFail' ? 'warn' : 'bad';
+  suite.spotlight(r.state === 'locked' ? [] : t.show); // After the class reset above. Evidence the story mentions, never the fix.
   for (const [id, value] of [['lnbPower', cfg.lnbPower], ['inverted', cfg.inverted]]) $(id).checked = value;
   for (const [id, value] of [['freqMHz', cfg.freqMHz], ['rsMsps', cfg.rsMsps]]) if (document.activeElement !== $(id)) $(id).value = value;
   const demod = r.state === 'locked' || r.state === 'fecFail';
