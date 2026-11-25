@@ -1,72 +1,44 @@
 # SatLab roadmap
 
-SatLab is one repo and one static site, with each simulator on its own page. Code moves into `lib/` only once a second simulator needs it.
+SatLab is one repo and one static site at [satlab.steckley.xyz](https://satlab.steckley.xyz), with each simulator on its own page. Code moves into `lib/` only once a second simulator needs it.
 
 Audience: working RF and satcom technicians. Assume dB, dBm and spectrum analyzers. Explain concepts plainly, and keep equations available without requiring them.
 
-## Build order
+Bugs and inaccuracies are tracked as [GitHub issues](https://github.com/the-steckles/satlab/issues). Every lab links there from its header.
 
-Each tool sets up the next.
+## Labs
 
-| # | Tool | Status | Why here |
-|---|------|--------|----------|
-| 1 | Peaker | Live | Pointing, peaking, side lobes, auto-peak, step-track |
-| 2 | Mixer Lab | Live | Creates the shared signal engine |
-| 3 | Link Budget Lab | Built, awaiting release | Shows where Es/N0 comes from before anything disturbs it |
-| 4 | Interference Lab | Live, update awaiting release | Reuses the amplifier model to explain saturation and power robbing |
-| 5 | DVB-S2 Overlay Lab | Live, update awaiting release, see `dvbs2-plan.md` | Needs receiver-state modeling on top of the link model |
-| 6 | Field Troubleshooter | Built, awaiting release | Applies every earlier lab to a fault and a report |
+Each lab sets up the next.
 
-`lib/receiver.js` holds the one receiver lock rule that Interference, DVB-S2 and Troubleshooter share. Link Budget still imports Peaker's antenna and path-loss code directly. Move those into `lib/` if a third lab needs them.
+| # | Lab | Status | What it adds |
+|---|-----|--------|--------------|
+| 1 | Peaker | Live | Pointing, peaking, side lobes, auto-peak, step-track, daily satellite motion |
+| 2 | Mixer Lab | Live | Mixing products, images, spurs, compression and intermodulation through a full link |
+| 3 | Link Budget Lab | Live | Where Es/N0 comes from before anything disturbs it, and choosing backoff and MODCOD |
+| 4 | Interference Lab | Live | Interference types, power robbing, ALC, rain, mispointing, cross-pol, adjacent satellites and the operator's response |
+| 5 | DVB-S2 Overlay Lab | Live | Receiver lock states, capture by a stronger signal, monitoring and content authentication |
+| 6 | Field Troubleshooter | Live, still in work | Applies every earlier lab to a modem that will not lock and to an interference report |
 
-## 2. Mixers and intermodulation
+Field Troubleshooter is marked "Still in work" on the site because it has known bugs. The flag is `inWork` in `lib/suite.js`, with a matching badge in the root `index.html`.
 
-**Scenes**
+Design notes for the larger labs are in `mixers-plan.md`, `interference-plan.md` and `dvbs2-plan.md`. Independent reviews and their fixes are in `reviews/`.
 
-1. **Bench:** one mixer with RF and LO inputs on a virtual test bench.
-2. **Ground uplink:** IF, upconverter or BUC, filter, HPA, feed.
-3. **Satellite receive (uplink):** the satellite's LNA, downconverter, filter and channel path.
-4. **Satellite downlink:** channel amplifier, TWTA, output filter, antenna.
-5. **Ground downlink:** feed, LNB (LNA, image filter, mixer, LO), IF to the modem.
+## Known open items
 
-**Concepts to teach**
+From the [second review round](reviews/2026-11-22-round-2/README.md), still open:
 
-- Sum and difference products, and high-side against low-side LO.
-- Image frequencies and why the image filter sits before the mixer.
-- Harmonics and the mixer spur table (`m RF ± n LO`).
-- Single-ended, balanced and double-balanced mixers, and which products each one suppresses.
-- LO drive, conversion loss, and LO-to-RF, LO-to-IF and RF-to-IF isolation.
-- P1dB and compression.
-- Two-tone third-order products at `2f1 - f2` and `2f2 - f1`, rising 3 dB per 1 dB of input.
-- IP2 and IP3 as extrapolated intercepts, measured live on a slope plot.
-- Cascaded gain, noise figure and IP3, and how stage order changes them.
-- Spectral inversion from high-side LO.
+- Interference: the Other carrier row does not show Reacquiring, and each Diagnose cause has one evidence answer.
+- Mixer: the TWTA plot has no Psat line or IBO and OBO markers.
+- Troubleshooter: throughput ignores framing overhead, and the analyzer scale changes between tickets.
+- Link Budget still imports Peaker's antenna and path-loss code. Move it into `lib/` if a third lab needs it.
+- SatLab-1 and the TWTA are not unified across labs. Their differences are stated on screen.
+- Not tested on real hardware, real phones or screen readers.
 
-**Teaching features carried over from Peaker**
+`lib/receiver.js` holds the one receiver lock rule that Interference, DVB-S2 and Troubleshooter share.
 
-- A spectrum analyzer with real axes and hover readouts.
-- A "How it works" panel with plain-language explanations using the live numbers.
-- Pause and step through guided experiments.
+## Safety limits for the Interference and DVB-S2 labs
 
-## 3. Link interference
-
-- Link budget with C/N, C/I and C/(N+I), and the resulting Es/N0 margin.
-- Interference types: CW, swept, barrage and partial-band.
-- Uplink against downlink interference: an uplink interferer is received by the whole footprint, a downlink interferer only affects nearby receivers.
-- Transponder saturation and power robbing, using the amplifier model from the mixer tool.
-- Adjacent-satellite and cross-polarization interference as innocent causes.
-- The operator's view: what the carrier monitor shows, how to tell interference from rain fade or mispointing, how interference is located, and which mitigations work.
-
-## 4. DVB-S2 signal overlay
-
-- Constellations, MER and MODCOD thresholds.
-- Frame sync (PLHEADER), FEC and the receiver's lock states.
-- A receiver degrades, loses lock, and captures a stronger signal as the power ratio changes.
-- The defender's view: what monitoring shows, how an overlay is detected, and what mitigates it.
-
-## Safety limits for tools 3 and 4
-
-These tools teach how links fail and how operators defend them. They are simulators, not transmit tools.
+These labs teach how links fail and how operators defend them. They are simulators, not transmit tools.
 
 - Use fictional satellites and transponders, never Peaker's real catalog.
 - Model DVB-S2 at the symbol and receiver-state level, with no real bitstream encoder.
@@ -75,8 +47,9 @@ These tools teach how links fail and how operators defend them. They are simulat
 - Teach detection, location and mitigation alongside every effect.
 - State that unauthorized transmission is illegal.
 
-## Other ideas
+## Ideas
 
 - Rain fade, polarization skew and adjacent-satellite interference in Peaker.
 - LO phase noise on the constellation, adaptive coding during a fade, and uplink power control.
+- A Psat line and IBO and OBO markers on Mixer Lab's TWTA plot.
 - A phone-friendly layout for every new simulator from the start, reusing Peaker's pinned dock approach.

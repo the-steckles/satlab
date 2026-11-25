@@ -20,8 +20,8 @@ export function rampCaption(rx, authOn) {
     return rx.state === 'locked' ? 'The receiver is following the carrier. Any second signal spreads the IQ dots, but FEC still corrects every error, so the picture stays clean.' : 'Under 1 dB of margin. The picture is still clean, but there is almost nothing left.';
   }
   return {
-    fecFail: 'The demodulator is tracking frame headers, but there are more errors than FEC can correct. The picture freezes and breaks up. This is the state technicians call “demod locked, FEC failing”.',
-    lost: 'Interference is now too strong for the demodulator to hold the frame headers and phase, so the constellation smears into rings.',
+    fecFail: 'The demodulator is tracking frame headers, but there are more errors than FEC can correct. The picture breaks up, freezes, then goes blank. This is the state technicians call “demod locked, FEC failing”.',
+    lost: 'Interference is now too strong for the demodulator to hold the frame headers and phase. Without a phase reference every point spins around the center, so the constellation smears into one large ring. A tone, by contrast, draws a small ring around each point.',
     searching: 'The receiver is searching for frame headers it can lock to, and there is no decoded picture.',
     frameSync: 'The receiver found frame headers. Until FEC decodes the stream, it cannot tell whose signal this is.',
     carrierLock: 'Carrier frequency and phase are recovered, so the constellation snaps back into points.',
@@ -41,7 +41,7 @@ export const LESSONS = [
   {
     title: 'A second signal appears', show: ['overlayOn', 'ratioDb', 'esCarrier', 'esNeed', 'iq'], set: { overlayOn: true, ratioDb: -15 },
     see: { href: '/interference/?lesson=2', text: 'Review how interference adds to noise: Interference Lab' },
-    text: ({ l, p, rx }) => `A second uplink shares the same frequency, ${relative(p)}. To the receiver it is added interference. Es/(N+I) is ${n(l.carrierEs)} dB, ${versus(l.carrierEs, l.need)}. ${stateLine(rx)} ${decoding(rx) ? 'The IQ plot warns you before the video does.' : ''}`.trim(),
+    text: ({ l, p, rx }) => `A second uplink shares the same frequency, ${relative(p)}. To the receiver it is added interference. Es/(N+I) is ${n(l.carrierEs)} dB, ${versus(l.carrierEs, l.need)}. ${stateLine(rx)} ${decoding(rx) ? 'The IQ plot warns you before the video does.' : ''} The second signal is modulated and runs on its own symbol clock, so the receiver catches it between its symbols at a different size every time. That spreads each point into a round cloud, just like noise. A CW tone keeps one size and only turns, which is why it draws a ring around each point instead.`.replace(/ {2,}/g, ' '),
   },
   {
     title: 'Near the cliff', show: ['ratioDb', 'esCarrier', 'decoded'], set: { overlayOn: true, ratioDb: -8 },
@@ -54,11 +54,11 @@ export const LESSONS = [
   },
   {
     title: 'Service died, but the level barely moved', show: ['ratioDb', 'monLevel', 'monMer'], set: { overlayOn: true, ratioDb: -6.5 },
-    text: ({ l, p, rx }) => `Total transponder output is up ${n(l.totalDb)} dB, ${l.totalDb < 1 ? 'too little for a level meter to alarm' : 'enough to trip the level alarm at this setting'}. The second signal is ${relative(p)}. Power adds, and the TWTA compresses what is added, so the total hardly changes. ${decoding(rx) ? 'This MODCOD is still holding.' : 'That is enough to take this service down.'} Levels show how much power is present. Es/(N+I) and MER show how usable it is, so a monitor must watch both.`,
+    text: ({ l, p, rx }) => `Total transponder output is up ${n(l.totalDb)} dB, ${l.totalDb < 1 ? 'too little for a level meter to alarm' : 'enough to trip the level alarm at this setting'}. The second signal is ${relative(p)}. Power adds, and the TWTA compresses what is added, so the total hardly changes. ${decoding(rx) ? 'This MODCOD is still holding.' : `That is enough to take this service down. The picture broke up, froze, then went blank, because FEC decodes nothing. The receiver still reports ${rx.state === 'fecFail' ? 'demod locked, FEC failing' : 'its state'}, not Lost: the RF is there and the demodulator still follows the frame headers, but none of it is usable.`} Levels show how much power is present. Es/(N+I) and MER show how usable it is, so a monitor must watch both.`,
   },
   {
     title: 'Neither signal decodes', show: ['esCarrier', 'esOverlay', 'iq'], set: { overlayOn: true, ratioDb: 0 },
-    text: ({ l, rx }) => `Near equal power, each signal is the other’s interference. Carrier Es/(N+I) is ${n(l.carrierEs)} dB and overlay Es/(N+I) is ${n(l.overlayEs)} dB, against ${n(l.need)} dB needed. ${decoding(rx) ? 'This robust setting still decodes one of them.' : rx.state === 'fecFail' ? 'The demodulator may still follow frame headers, but its points are a shapeless cloud and FEC cannot decode either signal.' : 'The demodulator has lost its phase reference, so the constellation collapses into rings.'} This model draws tidy overlaps. A real unsynchronized signal usually looks more like noise, so do not wait for a neat pattern before suspecting interference.`,
+    text: ({ l, rx }) => `Near equal power, each signal is the other’s interference. Carrier Es/(N+I) is ${n(l.carrierEs)} dB and overlay Es/(N+I) is ${n(l.overlayEs)} dB, against ${n(l.need)} dB needed. ${decoding(rx) ? 'This robust setting still decodes one of them.' : rx.state === 'fecFail' ? `FEC cannot decode either signal, so the screen is blank. The receiver still says demod locked, FEC failing rather than Lost, because each frame header is sent in a very robust form that survives down to about ${n(DEMOD_HOLD_DB)} dB in this model. The demodulator keeps its place in the frames even though their contents are unreadable. A receiver switched on now would lock to the headers too, so this is not hysteresis yet. Step 9 shows where history matters.` : 'The demodulator has lost its phase reference, so the whole constellation spins into one large ring. That is different from a tone, which draws a small ring around each point.'} On the IQ plot the overlap is a shapeless cloud, the same as heavy noise, so do not wait for a neat pattern before suspecting interference.`,
   },
   {
     title: 'Capture', show: ['esOverlay', 'rxState', 'rxSource', 'iq', 'decoded'], set: { overlayOn: true, ratioDb: 10 },

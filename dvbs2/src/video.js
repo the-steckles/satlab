@@ -52,12 +52,16 @@ function corrupt(ctx, w, h, errors) {
   }
 }
 
+// A set-top box holds the last picture briefly when decoding stops, then blanks the screen.
+const FREEZE_S = 1.5;
+
 export function createDecoder(canvas) {
   const ctx = canvas.getContext('2d');
-  let hasFrame = false;
+  let hasFrame = false, frozenAt = null;
   return (video, t) => {
     const w = canvas.width, h = canvas.height;
-    if (video.mode === 'frozen' && hasFrame) { corrupt(ctx, w, h, 0.06); return; }
+    frozenAt = video.mode === 'frozen' ? (frozenAt ?? t) : null;
+    if (video.mode === 'frozen' && hasFrame && t - frozenAt < FREEZE_S) { corrupt(ctx, w, h, 0.06); return; }
     if (video.mode === 'none' || video.mode === 'frozen') { message(ctx, w, h, video.mode === 'frozen' ? 'NO DECODED STREAM' : 'NO SIGNAL LOCK', '#0a0f14'); hasFrame = false; return; }
     if (video.mode === 'blocked') { message(ctx, w, h, 'BLOCKED: NOT AUTHENTIC', '#3a1f1d'); hasFrame = false; return; }
     drawSource(ctx, w, h, video.mode, t);

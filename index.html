@@ -20,6 +20,8 @@
   a.tool h3 { color:var(--accent); }
   .tool p { margin:0; color:var(--muted); font-size:14px; }
   .tool p.builds { margin-top:6px; font-size:12px; }
+  .foot { margin:32px 0 0; color:var(--muted); font-size:14px; }
+  .foot a { color:var(--accent); }
   .wip { display:inline-block; margin-left:8px; padding:1px 7px; border:1px solid rgba(232,163,61,.5); border-radius:10px; color:#e8a33d; font-size:11px; font-weight:600; vertical-align:3px; }
 </style>
 </head>
@@ -49,7 +51,7 @@
     <p class="builds">Builds on: beacons from Peaker, compression from Mixer Lab, Es/N0 and margin from Link Budget Lab.</p>
   </a>
   <a class="tool" href="/dvbs2/" style="margin-top:10px">
-    <h3>5. DVB-S2 Overlay Lab<span class="wip">Still in work</span></h3>
+    <h3>5. DVB-S2 Overlay Lab</h3>
     <p>Follow video through a full broadcast chain, then watch a stronger signal break and capture the receiver, and how operators detect it.</p>
     <p class="builds">Builds on: C/(N+I), margin and IQ plots from Interference Lab.</p>
   </a>
@@ -58,6 +60,7 @@
     <p>Work tickets on a modem that will not lock, then write a clear interference report and learn who to call.</p>
     <p class="builds">Builds on: every lab before it.</p>
   </a>
+  <p class="foot">SatLab is open source. <a href="https://github.com/the-steckles/satlab">See the code on GitHub</a>, or <a href="https://github.com/the-steckles/satlab/issues/new?title=%5BSatLab%5D%20">report a bug or inaccuracy</a>.</p>
 </main>
 </body>
 </html>

@@ -2,6 +2,8 @@
 
 A browser simulator for pointing and peaking a ground antenna on a real satellite. Pick a satellite, ground station, dish size and band, then find the beacon on a spectrum analyzer and waterfall by hand, or with auto-peak and step-track.
 
+**Try it: [satlab.steckley.xyz/peaker](https://satlab.steckley.xyz/peaker/)**. Peaker is the first lab in [SatLab](../README.md).
+
 ## Run
 
 ```sh

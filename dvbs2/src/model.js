@@ -90,6 +90,25 @@ export function videoState(rx, p) {
   return { mode: rx.source, errors: margin >= 0.2 ? 0 : Math.min(0.6, 0.1 + (0.2 - margin) * 2) };
 }
 
+// Raised-cosine pulse: the transmit and receive root-raised-cosine filters together, with DVB-S2's 0.2 roll-off.
+const ROLLOFF = 0.2;
+const pulse = (t) => {
+  const sinc = Math.abs(t) < 1e-9 ? 1 : Math.sin(Math.PI * t) / (Math.PI * t), d = 1 - (2 * ROLLOFF * t) ** 2;
+  return Math.abs(d) < 1e-6 ? (Math.PI / 4) * sinc : (sinc * Math.cos(Math.PI * ROLLOFF * t)) / d;
+};
+
+// The other signal runs on its own clock, so the receiver samples it between its symbols. Its neighbors leak in
+// through the pulse shape and its amplitude varies, which spreads each point into a cloud rather than a ring.
+function unsyncedSymbol(ideal, rand) {
+  const offset = rand();
+  let i = 0, q = 0;
+  for (let k = -6; k <= 6; k++) {
+    const x = ideal[Math.floor(rand() * ideal.length)], h = pulse(k + offset);
+    i += x.i * h; q += x.q * h;
+  }
+  return { i, q };
+}
+
 // Received symbols relative to whichever signal the demodulator is following.
 export function iqSamples(p, rx, count = 1100, rand = Math.random) {
   const l = levels(p), ideal = constellation(p.modcod);
@@ -97,7 +116,7 @@ export function iqSamples(p, rx, count = 1100, rand = Math.random) {
   const other = Math.sqrt(otherPower / refPower), sigma = Math.sqrt(l.n / (l.g * refPower) / 2), tracking = TRACKING.has(rx.state);
   const samples = [];
   for (let n = 0; n < count; n++) {
-    const s = ideal[Math.floor(rand() * ideal.length)], x = ideal[Math.floor(rand() * ideal.length)], phase = 2 * Math.PI * rand();
+    const s = ideal[Math.floor(rand() * ideal.length)], x = other > 0 ? unsyncedSymbol(ideal, rand) : { i: 0, q: 0 }, phase = 2 * Math.PI * rand();
     let i = s.i + other * (x.i * Math.cos(phase) - x.q * Math.sin(phase)) + sigma * gaussian(rand);
     let q = s.q + other * (x.i * Math.sin(phase) + x.q * Math.cos(phase)) + sigma * gaussian(rand);
     // Without carrier recovery the constellation has no fixed rotation, so it smears into rings.

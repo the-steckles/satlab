@@ -129,6 +129,14 @@ test('the picture is clean just above threshold', () => {
   assert.equal(videoState(rx, p).errors, 0);
 });
 
+test('an unsynchronized overlay spreads points into clouds, not tone-like rings', () => {
+  const p = { ...DEFAULTS, cnDb: 24, overlayOn: true, ratioDb: -12 }, iq = iqSamples(p, settle(p), 3000);
+  const err = iq.samples.map((s) => Math.min(...iq.ideal.map((x) => Math.hypot(s.i - x.i, s.q - x.q))));
+  const mean = err.reduce((a, b) => a + b, 0) / err.length, sd = Math.sqrt(err.reduce((a, b) => a + (b - mean) ** 2, 0) / err.length);
+  // A ring keeps one error size (about 0.17 here). Unsynchronized symbols spread it to about 0.33.
+  assert.ok(sd / mean > 0.25, `spread ${(sd / mean).toFixed(2)}`);
+});
+
 test('monitoring alarms on an outage even when the level barely moved', () => {
   const p = at(-6.5), m = monitor(p, run(settle(at(-20)), p, 2));
   assert.equal(m.levelAlarm, false);

@@ -28,6 +28,30 @@ const BLOCKS = [
   ['display', 'rx', 'Video decoder', 'Rebuilds the picture. Lost data shows up as blocks, freezes or a blank screen.'],
 ];
 
+// Small pictures of what each block does to the signal, drawn in a 32 by 20 box.
+const dots = (r, count) => Array.from({ length: count }, (_, k) => { const a = (2 * Math.PI * k) / count + Math.PI / count; return `<circle cx="${16 + r * Math.cos(a)}" cy="${10 + r * Math.sin(a)}" r="1.4" class="fill"/>`; }).join('');
+const ICONS = {
+  source: BARS_ICON(),
+  encoder: '<rect x="2" y="3" width="11" height="14"/><path d="M15 10h5m-2-2.5 2.5 2.5-2.5 2.5"/><rect x="23" y="6.5" width="7" height="7"/>',
+  mux: '<rect x="2" y="2" width="5" height="4"/><rect x="2" y="8" width="5" height="4"/><rect x="2" y="14" width="5" height="4"/><path d="M8 4l5 6M8 10h5M8 16l5-6"/><rect x="15" y="7.5" width="3.5" height="5"/><rect x="20" y="7.5" width="3.5" height="5"/><rect x="25" y="7.5" width="3.5" height="5"/>',
+  fec: '<rect x="2" y="6" width="5" height="8"/><rect x="8" y="6" width="5" height="8"/><rect x="14" y="6" width="5" height="8"/><rect x="20" y="6" width="4.5" height="8" class="fill"/><rect x="25.5" y="6" width="4.5" height="8" class="fill"/>',
+  mapper: `<path d="M16 2v16M6 10h20" class="faint"/>${dots(7, 8)}`,
+  framing: '<rect x="2" y="6" width="6" height="8" class="fill"/><rect x="9" y="6" width="21" height="8"/>',
+  shaping: '<path d="M2 17h3C9 17 10 4 13 4h6c3 0 4 13 8 13h3"/>',
+  hpa: '<path d="M2 10h7M23 10h7M9 3l14 7-14 7z"/>',
+  sat: '<rect x="13" y="4" width="6" height="7"/><path d="M5 6h6v3H5zM21 6h6v3h-6z"/><path d="M8 19l6-6" class="up"/><path d="M24 19l-6-6" class="overlayUp"/>',
+  lnb: '<path d="M9 2a12 12 0 0 1 0 16"/><path d="M10 10h12"/><rect x="22" y="7" width="7" height="6"/>',
+  demux: '<rect x="2" y="7" width="7" height="6"/><path d="M10 10h4M14 10l5-6M14 10h5M14 10l5 6"/><rect x="21" y="2" width="6" height="4"/><rect x="21" y="8" width="6" height="4"/><rect x="21" y="14" width="6" height="4"/>',
+  display: '<rect x="5" y="2" width="22" height="13"/><path d="M12 18h8M16 15v3"/>',
+};
+function BARS_ICON() { return ['#c8c8c8', '#c8c800', '#00c8c8', '#00c800', '#c800c8', '#c80000', '#0000c8'].map((c, k) => `<rect x="${2 + k * 4}" y="3" width="4" height="14" style="fill:${c};stroke:none"/>`).join(''); }
+// The demodulator and decoder icons show live what they are doing.
+const liveIcon = (id) => {
+  if (id === 'demod') return ['searching', 'lost'].includes(S.rx.state) ? '<path d="M16 2v16M6 10h20" class="faint"/><circle cx="16" cy="10" r="7"/>' : `<path d="M16 2v16M6 10h20" class="faint"/>${dots(7, 8)}`;
+  if (id === 'decoder') return isDecoding(S.rx) ? '<rect x="2" y="3" width="28" height="14" class="faint"/><path d="M10 10l4 4 8-8"/>' : '<rect x="2" y="3" width="28" height="14" class="faint"/><path d="M11 5l10 10M21 5 11 15"/>';
+  return ICONS[id];
+};
+
 function blockHealth(id, zone) {
   const { state, source } = S.rx, onOverlay = source === 'overlay';
   if (zone !== 'rx' || id === 'lnb') return '';
@@ -41,12 +65,18 @@ function blockHealth(id, zone) {
 }
 
 function renderChain() {
+  let broken = false;
   for (const [id, zone] of BLOCKS) {
-    const b = $(`b-${id}`);
-    b.dataset.health = blockHealth(id, zone);
+    const b = $(`b-${id}`), health = blockHealth(id, zone), icon = liveIcon(id);
+    b.dataset.health = health;
     b.classList.toggle('active', id === S.block);
     b.setAttribute('aria-pressed', id === S.block);
+    if (b.dataset.icon !== icon) { b.firstChild.innerHTML = icon; b.dataset.icon = icon; }
+    // Once a block fails, nothing usable flows on, so every arrow after it is drawn broken.
+    broken ||= health === 'bad';
+    b.nextElementSibling?.classList.toggle('broken', broken);
   }
+  $('b-sat').style.setProperty('--overlayWidth', S.p.overlayOn ? `${1 + Math.max(0, Math.min(3, (S.p.ratioDb + 25) / 12))}px` : '0px');
   const block = BLOCKS.find((x) => x[0] === S.block);
   $('blockNote').textContent = `${block[2]}: ${block[3]}`;
 }
@@ -207,12 +237,20 @@ function startRamp(dir) {
 function wire() {
   const zones = { tx: $('chainTx'), space: $('chainTx'), rx: $('chainRx') };
   for (const [id, zone, name] of BLOCKS) {
-    const b = document.createElement('button');
+    const b = document.createElement('button'), icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg'), label = document.createElement('span');
     b.id = `b-${id}`;
-    b.textContent = name;
+    icon.setAttribute('viewBox', '0 0 32 20');
+    icon.setAttribute('aria-hidden', 'true');
+    label.textContent = name;
+    b.append(icon, label);
     b.dataset.zone = zone;
     b.addEventListener('click', () => { S.block = id; renderChain(); });
+    const arrow = document.createElement('span');
+    arrow.className = 'arrow';
+    arrow.setAttribute('aria-hidden', 'true');
+    arrow.textContent = id === 'sat' ? '↓' : '→';
     zones[zone].append(b);
+    if (id !== 'display') zones[zone].append(arrow);
   }
   $('modcod').append(...Object.entries(MODCODS).map(([name, v]) => new Option(`${name} (${v.toFixed(1)} dB)`, name)));
   $('ratioDb').addEventListener('input', (e) => { S.ramping = false; S.rampView = false; S.p.ratioDb = +e.target.value; settingChanged(); });
