@@ -9,6 +9,10 @@ export const RS_MHZ = 5, TP_HALF_MHZ = 18;
 export const UP_CENTER_MHZ = 14250, DOWN_CENTER_MHZ = 12500;
 // Illustrative: a poorly aligned feed. A well-aligned one is typically 30 dB or better.
 export const XPOL_ISOLATION_DB = 15;
+const GOOD_ISOLATION_DB = 30;
+// The beacon sits outside the transponder, as beacons usually do, and has its own path from the satellite.
+export const BEACON_MHZ = 22;
+const BEACON_DB = 10; // Illustrative display height of the beacon line.
 // Illustrative: moving off peak toward a neighbor raises its signal faster than it lowers yours.
 const ASI_DB_PER_POINTING_DB = 3, ASI_MAX_RISE_DB = 20;
 const ALC_RANGE_DB = 15, UPLINK_CN_DB = 22, DOWNLINK_CN_AT_SAT_DB = 25, SYSTEM_TEMP_K = 150, RAIN_TEMP_K = 275;
@@ -175,7 +179,8 @@ export const VIEWS = {
 
 // Power spectral density in dB, with 0 dB at the clear-sky carrier for that test point.
 // dwellS is the analyzer's time per trace, so a fast sweep paints a continuous track instead of dots.
-export function spectrum(params, view, tS, bins = 512, spanHalf = 26, dwellS = 0) {
+// pol 'x' reads the opposite polarization, where your own signals arrive only through the feed's isolation.
+export function spectrum(params, view, tS, bins = 512, spanHalf = 26, dwellS = 0, pol = 'co') {
   const r = evaluate(params, tS), p = r.params, tp = r.tp;
   const clear = evaluate({ ...p, iboDb: DEFAULTS.iboDb, alc: false, rainDb: 0, mispointDb: 0, trimDb: 0, neighborTrimDb: 0, interferer: { ...p.interferer, on: false } });
   const isInput = view === 'input', isSite = view === 'A' || view === 'B';
@@ -183,7 +188,8 @@ export function spectrum(params, view, tS, bins = 512, spanHalf = 26, dwellS = 0
   // The backoff control is a gain step after the satellite's input, so the input view is read ahead of it.
   const gain = isInput ? lin(p.iboDb - DEFAULTS.iboDb) : tp.ratio * tp.weak * loss;
   const ref = (isInput ? clear.tp.carrier : clear.tp.carrier * clear.tp.ratio) / RS_MHZ;
-  let band = interfererBand(p.interferer, tS);
+  const instant = interfererBand(p.interferer, tS);
+  let band = instant;
   if (band && p.interferer.kind === 'swept' && dwellS > 0) {
     const before = interfererBand(p.interferer, Math.max(0, tS - dwellS));
     // A sawtooth reset jumps across the band, and that jump is not swept energy.
@@ -192,9 +198,19 @@ export function spectrum(params, view, tS, bins = 512, spanHalf = 26, dwellS = 0
   const rainNoise = view === 'A' ? 1 + (RAIN_TEMP_K * (1 - lin(-p.rainDb))) / SYSTEM_TEMP_K : 1;
   const downNoise = isSite ? (lin(-DOWNLINK_CN_AT_SAT_DB) * rainNoise) / RS_MHZ : 0;
   // The analyzer resolves one bin, so a tone puts all its power there and reads as a line.
-  const binMHz = (2 * spanHalf) / (bins - 1), firstBin = band ? Math.round((band[0] + spanHalf) / binMHz) : 0;
-  const lastBin = band ? Math.max(firstBin, Math.round((band[1] + spanHalf) / binMHz)) : -1, shownMHz = (lastBin - firstBin + 1) * binMHz;
+  const binMHz = (2 * spanHalf) / (bins - 1), bin = (mhz) => Math.round((mhz + spanHalf) / binMHz);
+  const firstBin = band ? bin(band[0]) : 0, lastBin = band ? Math.max(firstBin, bin(band[1])) : -1;
+  // Density comes from the instantaneous width: a peak detector catches a swept tone at full height in every bin it
+  // crosses during the dwell, so the track stays a line instead of a lower block with width.
+  const shownMHz = instant ? (Math.max(bin(instant[0]), bin(instant[1])) - bin(instant[0]) + 1) * binMHz : 1;
   const iDensity = band ? (tp.iPower / shownMHz) / (isInput ? 1 : tp.weak) : 0; // The interferer itself is not suppressed.
+  const xSource = p.interferer.source === 'xpol', opposite = pol === 'x';
+  // A bad feed leaks at 15 dB. Where the feeds are good, your signals are 30 dB down on the other polarization.
+  const own = opposite ? lin(-(xSource && (p.interferer.path === 'uplink' || view === 'A') ? XPOL_ISOLATION_DB : GOOD_ISOLATION_DB)) : 1;
+  // A cross-pol signal is a real carrier on the other polarization, so there it is stronger by the isolation, at every site.
+  const onSatellite = p.interferer.path === 'uplink' || (opposite && xSource);
+  const iScale = !opposite ? 1 : xSource ? lin(XPOL_ISOLATION_DB) : own;
+  const beaconBin = isInput ? -1 : bin(BEACON_MHZ);
   const out = new Float64Array(bins);
   for (let n = 0; n < bins; n++) {
     const f = -spanHalf + (2 * spanHalf * n) / (bins - 1);
@@ -202,10 +218,11 @@ export function spectrum(params, view, tS, bins = 512, spanHalf = 26, dwellS = 0
     let psd = (tp.carrier * raisedCosine(f, p.carrierMHz, p.rsMHz)) / p.rsMHz + (tp.neighbor * raisedCosine(f, p.neighborMHz, p.neighborRsMHz)) / p.neighborRsMHz;
     // Spectral regrowth: third-order energy spreads to about three times the carrier width.
     if (!isInput) psd += ((tp.carrier * shoulder(f, p.carrierMHz, p.rsMHz)) / p.rsMHz + (tp.neighbor * shoulder(f, p.neighborMHz, p.neighborRsMHz)) / p.neighborRsMHz) / lin(tp.cimDb);
-    psd += tp.noisePerMHz;
-    if (band && p.interferer.path === 'uplink' && n >= firstBin && n <= lastBin) psd += iDensity;
+    psd = psd * own + tp.noisePerMHz;
+    if (band && onSatellite && n >= firstBin && n <= lastBin) psd += iDensity * iScale;
     let level = psd * gain * filter + downNoise;
-    if (band && p.interferer.path === 'downlink' && view === 'A' && n >= firstBin && n <= lastBin) level += (clear.tp.carrier * clear.tp.ratio * lin(p.interferer.icDb + asiRiseDb(p))) / shownMHz;
+    if (band && !onSatellite && view === 'A' && n >= firstBin && n <= lastBin) level += (own * clear.tp.carrier * clear.tp.ratio * lin(p.interferer.icDb + asiRiseDb(p))) / shownMHz;
+    if (n === beaconBin) level += ref * lin(BEACON_DB) * own * loss; // Rain and pointing move it, the transponder does not.
     out[n] = dB(level / ref);
   }
   return { db: out, lowMHz: -spanHalf, highMHz: spanHalf, centerMHz: VIEWS[view].centerMHz, band };

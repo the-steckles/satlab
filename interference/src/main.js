@@ -1,6 +1,6 @@
 import { drawConstellation } from '../../lib/constellation.js';
 import { LESSONS } from './lessons.js';
-import { ANSWERS, CASES, DEFAULTS, EVIDENCE, evaluate, iqSamples, liveState, lockShare, MODCODS, spectrum, ticketSet, usableShare, VIEWS } from './model.js';
+import { ANSWERS, BEACON_MHZ, CASES, DEFAULTS, EVIDENCE, evaluate, iqSamples, liveState, lockShare, MODCODS, spectrum, ticketSet, usableShare, VIEWS } from './model.js';
 import { throughputMbps } from '../../lib/modcods.js';
 import { createWaterfall, drawTrace } from './plots.js';
 import { mountSuite, parseLesson, writeLesson } from '../../lib/suite.js';
@@ -9,7 +9,7 @@ const suite = mountSuite('interference', { jumps: [['lessonBox', 'Lesson'], ['si
 const $ = (id) => document.getElementById(id);
 const BINS = 512, TOP_DB = 40, BOTTOM_DB = -40, FRAME_MS = 90;
 const fresh = () => ({ ...DEFAULTS, interferer: { ...DEFAULTS.interferer } });
-const S = { mode: 'learn', params: fresh(), view: 'A', iqSite: 'A', lesson: 0, caseOrder: [], caseIndex: 0, picked: null, answered: null, scores: new Map(), ticketSets: new Map(), answers: new Map(), t: 0, paused: false, hoverX: null, last: 0, db: null, meta: null };
+const S = { mode: 'learn', params: fresh(), view: 'A', pol: 'co', iqSite: 'A', lesson: 0, caseOrder: [], caseIndex: 0, picked: null, answered: null, scores: new Map(), ticketSets: new Map(), answers: new Map(), t: 0, paused: false, hoverX: null, last: 0, db: null, meta: null };
 const sign = (v, unit) => (Math.abs(v) < 0.05 ? `0.0 ${unit}` : `${v > 0 ? '+' : '−'}${Math.abs(v).toFixed(1)} ${unit}`);
 const num = (v, unit = 'dB') => (Number.isFinite(v) ? `${(Math.abs(v) < 0.05 ? 0 : v).toFixed(1).replace('-', '−')} ${unit}` : '–');
 let waterfall;
@@ -37,6 +37,7 @@ function buildSites() {
   $('sites').replaceChildren(...ROWS.map((row) => {
     const tr = document.createElement('tr'), th = document.createElement('td');
     th.textContent = row[0];
+    if (row[0] === 'Beacon level') tr.id = 'beaconRow'; // Lessons highlight it.
     tr.append(th, document.createElement('td'), document.createElement('td'));
     return tr;
   }));
@@ -92,7 +93,10 @@ function syncControls() {
   $('conditionsBox').hidden = diagnosing;
   $('powerBox').hidden = diagnosing;
   $('signatureBox').hidden = diagnosing; // It would hand over the ticket answers.
-  $('txBox').hidden = S.mode !== 'sandbox';
+  // Power lessons need the carrier levels and ALC, so they show the transmit controls too.
+  $('txBox').hidden = !(S.mode === 'sandbox' || (S.mode === 'learn' && LESSONS[S.lesson].tx));
+  $('sandboxReset').hidden = S.mode !== 'sandbox';
+  $('pol').value = S.pol;
   $('iqSite').value = S.iqSite;
   $('iboDb').closest('label').hidden = diagnosing; // Its value would give away the overdrive case.
   for (const b of $('views').children) {
@@ -186,17 +190,18 @@ function renderLesson(r) {
   }
 }
 
+// Four averaged power samples give the analyzer's noisy trace.
+const noisy = (clean) => clean.map((v) => {
+  let sum = 0;
+  for (let k = 0; k < 4; k++) sum -= Math.log(Math.max(1e-12, Math.random()));
+  return v + 10 * Math.log10(sum / 4);
+});
+
 function drawFrame(addRow) {
-  const s = spectrum(S.params, S.view, S.t, BINS, 26, FRAME_MS / 1000);
-  const db = new Float64Array(BINS);
-  // Four averaged power samples give the analyzer's noisy trace.
-  for (let i = 0; i < BINS; i++) {
-    let sum = 0;
-    for (let k = 0; k < 4; k++) sum -= Math.log(Math.max(1e-12, Math.random()));
-    db[i] = s.db[i] + 10 * Math.log10(sum / 4);
-  }
-  S.db = db; S.meta = s;
-  if (addRow) waterfall.push(db, BOTTOM_DB + 10, TOP_DB - 25);
+  // The trace shows where a sweep is now. The waterfall row holds everything it crossed during the frame.
+  const s = spectrum(S.params, S.view, S.t, BINS, 26, 0, S.pol);
+  S.db = noisy(s.db); S.meta = s;
+  if (addRow) waterfall.push(S.params.interferer.on && S.params.interferer.kind === 'swept' ? noisy(spectrum(S.params, S.view, S.t, BINS, 26, FRAME_MS / 1000, S.pol).db) : S.db, BOTTOM_DB + 10, TOP_DB - 25);
   paint();
 }
 
@@ -205,8 +210,8 @@ function paint() {
   const p = S.params;
   const carriers = [{ mhz: p.carrierMHz, width: p.rsMHz * 1.2, name: 'Yours', main: true }];
   if (p.neighborOn) carriers.push({ mhz: p.neighborMHz, width: p.neighborRsMHz * 1.2, name: 'Other', main: false });
-  drawTrace($('spectrum'), { db: S.db, lowMHz: S.meta.lowMHz, highMHz: S.meta.highMHz, centerMHz: S.meta.centerMHz, topDb: TOP_DB, bottomDb: BOTTOM_DB, carriers, hoverX: S.hoverX });
-  $('specTitle').textContent = `Spectrum at ${VIEWS[S.view].name}`;
+  drawTrace($('spectrum'), { db: S.db, lowMHz: S.meta.lowMHz, highMHz: S.meta.highMHz, centerMHz: S.meta.centerMHz, topDb: TOP_DB, bottomDb: BOTTOM_DB, carriers, beaconMHz: S.view === 'input' ? null : BEACON_MHZ, hoverX: S.hoverX });
+  $('specTitle').textContent = `Spectrum at ${VIEWS[S.view].name}${S.pol === 'x' ? ', opposite polarization' : ''}`;
 }
 
 function render() {
@@ -225,6 +230,7 @@ function applyLesson(i) {
   const base = fresh();
   S.params = { ...base, ...l.set, interferer: { ...base.interferer, ...l.set.interferer } };
   S.view = l.view;
+  S.pol = 'co';
   S.t = 0;
   waterfall.clear();
   render();
@@ -241,6 +247,7 @@ function applyCase(i) {
   const set = S.ticketSets.get(i);
   S.params = { ...base, ...set, interferer: { ...base.interferer, ...set.interferer } };
   S.view = 'A';
+  S.pol = 'co';
   S.t = 0;
   waterfall.clear();
   render();
@@ -312,6 +319,7 @@ function wire() {
   $('sweepShape').addEventListener('change', (e) => setI('sweepShape', e.target.value));
   for (const id of ['neighborOn', 'alc']) $(id).addEventListener('change', (e) => { S.params[id] = e.target.checked; render(); drawFrame(false); });
   $('iqSite').addEventListener('change', (e) => { S.iqSite = e.target.value; render(); });
+  $('pol').addEventListener('change', (e) => { S.pol = e.target.value; waterfall.clear(); syncControls(); drawFrame(false); });
   $('sandboxReset').addEventListener('click', applySandbox);
   $('modeSandbox').addEventListener('click', () => setMode('sandbox'));
   $('modeLearn').addEventListener('click', () => setMode('learn'));

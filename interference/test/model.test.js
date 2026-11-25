@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CASES, DEFAULTS, EVIDENCE, evaluate, interfererBand, iqSamples, liveState, lockShare, MODCODS, spectrum, ANSWERS, carrierToImDb, ticketSet, twtaOutput, usableShare, XPOL_ISOLATION_DB } from '../src/model.js';
+import { BEACON_MHZ, CASES, DEFAULTS, EVIDENCE, evaluate, interfererBand, iqSamples, liveState, lockShare, MODCODS, spectrum, ANSWERS, carrierToImDb, ticketSet, twtaOutput, usableShare, XPOL_ISOLATION_DB } from '../src/model.js';
 
 const near = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, `${msg ?? ''} expected ${b} ± ${tol}, got ${a}`);
 const withI = (i, extra = {}) => ({ ...extra, interferer: { ...DEFAULTS.interferer, on: true, ...i } });
@@ -245,6 +245,25 @@ test('a fast sweep paints a continuous track within one analyzer dwell', () => {
   const raised = (dwell) => { const clean = spectrum(withI({ kind: 'cw', icDb: -60, offsetMHz: 25 }), 'input', 0.5), s = spectrum(p, 'input', 0.5, 512, 26, dwell); return s.db.filter((v, n) => v > clean.db[n] + 1).length; };
   assert.equal(raised(0), 1);
   assert.ok(raised(0.09) > 15);
+  // The track holds the tone's full height, so it reads as a moving line, not a lower block with width.
+  const peak = (dwell) => Math.max(...spectrum(p, 'input', 0.5, 512, 26, dwell).db);
+  near(peak(0.09), peak(0), 0.01);
+});
+
+test('the beacon follows rain and pointing at Site A, and nothing else', () => {
+  const beacon = (params, view) => { const s = spectrum(params, view, 0); return s.db[Math.round((BEACON_MHZ + 26) / 52 * 511)]; };
+  near(beacon({ rainDb: 6 }, 'A') - beacon({}, 'A'), -6, 0.3);
+  near(beacon({ mispointDb: 4 }, 'A') - beacon({}, 'A'), -4, 0.3);
+  near(beacon({ rainDb: 6 }, 'B'), beacon({}, 'B'), 1e-9);
+  near(beacon(withI({ kind: 'cw', icDb: 10, offsetMHz: 0 }), 'A'), beacon({}, 'A'), 0.3, 'robbing');
+  assert.ok(beacon({}, 'input') < -10, 'no beacon at the satellite input');
+});
+
+test('the opposite polarization shows a cross-pol signal stronger and your carrier weaker', () => {
+  const p = CASES.find((c) => c.id === 'xpolI').set, at = (s, mhz) => s.db[Math.round((mhz + 26) / 52 * 511)];
+  const co = spectrum(p, 'A', 0), x = spectrum(p, 'A', 0, 512, 26, 0, 'x');
+  assert.ok(at(x, -6) > at(co, -6) + 5, 'signal stronger on the opposite polarization');
+  assert.ok(at(x, 8) < at(co, 8) - 10, 'your carriers fade');
 });
 
 test('cross-pol and adjacent-satellite tickets have their own signatures', () => {

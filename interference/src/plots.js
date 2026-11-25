@@ -3,7 +3,7 @@ import { COLORS as C, prepare, ticks, verticalLabel } from '../../lib/plot.js';
 export const M = { l: 56, r: 12, t: 12, b: 40 };
 const WANTED = '#0f9c7e', OTHER = '#5f7df0';
 
-export function drawTrace(canvas, { db, lowMHz, highMHz, centerMHz, topDb, bottomDb, carriers, hoverX }) {
+export function drawTrace(canvas, { db, lowMHz, highMHz, centerMHz, topDb, bottomDb, carriers, beaconMHz = null, hoverX }) {
   const { ctx, w, h } = prepare(canvas);
   const pw = w - M.l - M.r, ph = h - M.t - M.b;
   const X = (mhz) => M.l + ((mhz - lowMHz) / (highMHz - lowMHz)) * pw;
@@ -50,6 +50,10 @@ export function drawTrace(canvas, { db, lowMHz, highMHz, centerMHz, topDb, botto
     ctx.fillRect(X(c.mhz - c.width / 2), M.t, X(c.mhz + c.width / 2) - X(c.mhz - c.width / 2), 2);
     ctx.fillStyle = C.text;
     ctx.fillText(c.name, X(c.mhz), M.t + 15);
+  }
+  if (beaconMHz !== null) {
+    ctx.fillStyle = C.axis;
+    ctx.fillText('Beacon', Math.min(X(beaconMHz), M.l + pw - 22), M.t + 15);
   }
   ctx.restore();
 
